@@ -44,7 +44,9 @@ export function matchElements(
     }
   }
 
-  // Unmatched structural nodes
+  // Unmatched structural nodes (including invisible ones) → structural_only
+  // Invisible nodes are skipped during visual matching but still reported
+  // so callers can see all structural elements regardless of visibility.
   for (const structural of structuralNodes) {
     if (!claimedStructuralIds.has(structural.id)) {
       pairs.push({ visualElement: null, structuralNode: structural, iou: 0, fusionMethod: 'structural_only' });

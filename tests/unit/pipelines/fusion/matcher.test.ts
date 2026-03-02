@@ -60,4 +60,27 @@ describe('matchElements', () => {
     const pairs = matchElements(visual, [invisibleStructural]);
     expect(pairs.find(p => p.fusionMethod === 'visual_only')).toBeDefined();
   });
+
+  it('threshold boundary: IoU < 0.3 → visual_only, IoU >= 0.3 → fused', () => {
+    // Create overlapping boxes with known IoU
+    // Box A: (0, 0, 100, 100) = area 10000
+    // Box B: (71, 0, 100, 100) = area 10000
+    // Intersection: (71, 0, 29, 100) = area 2900
+    // Union: 10000 + 10000 - 2900 = 17100
+    // IoU = 2900 / 17100 ≈ 0.170 → below threshold
+    const visualBelow = [makeVisual('v1', 0, 0, 100, 100)];
+    const structuralBelow = [makeStructural('s1', 71, 0, 100, 100)];
+    const pairsBelow = matchElements(visualBelow, structuralBelow);
+    expect(pairsBelow.find(p => p.fusionMethod === 'visual_only')).toBeDefined();
+
+    // Box A: (0, 0, 100, 100) = area 10000
+    // Box B: (50, 0, 100, 100) = area 10000
+    // Intersection: (50, 0, 50, 100) = area 5000
+    // Union: 10000 + 10000 - 5000 = 15000
+    // IoU = 5000 / 15000 ≈ 0.333 → above threshold
+    const visualAbove = [makeVisual('v2', 0, 0, 100, 100)];
+    const structuralAbove = [makeStructural('s2', 50, 0, 100, 100)];
+    const pairsAbove = matchElements(visualAbove, structuralAbove);
+    expect(pairsAbove.find(p => p.fusionMethod === 'fused')).toBeDefined();
+  });
 });
