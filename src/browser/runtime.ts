@@ -1,5 +1,5 @@
 import { chromium, type Browser, type BrowserContext, type Page } from 'playwright';
-import type { BoundingBox, Viewport, BrowserAction } from '../types/index.js';
+import type { BoundingBox, Viewport } from '../types/index.js';
 import { createLogger } from '../utils/logger.js';
 
 const logger = createLogger('BrowserRuntime');
