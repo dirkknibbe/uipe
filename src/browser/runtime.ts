@@ -46,6 +46,10 @@ export class BrowserRuntime {
     return this.activePage.url();
   }
 
+  getPage(): Page {
+    return this.activePage;
+  }
+
   async navigate(url: string): Promise<void> {
     logger.info('Navigating', { url });
     await this.activePage.goto(url, { waitUntil: 'domcontentloaded' });
