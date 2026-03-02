@@ -50,4 +50,19 @@ describe('BrowserRuntime', () => {
       boundingBox: expect.objectContaining({ x: expect.any(Number), y: expect.any(Number) }),
     });
   });
+
+  it('executes a navigate action', async () => {
+    await runtime.launch();
+    await runtime.navigate('https://example.com');
+    await runtime.executeAction({ type: 'navigate', url: 'https://example.org' });
+    expect(runtime.currentUrl()).toContain('example.org');
+  });
+
+  it('executes a scroll action without throwing', async () => {
+    await runtime.launch();
+    await runtime.navigate('https://example.com');
+    await expect(
+      runtime.executeAction({ type: 'scroll', direction: 'down', amount: 100 })
+    ).resolves.not.toThrow();
+  });
 });
