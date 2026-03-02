@@ -1,6 +1,6 @@
 import { chromium, type Browser, type BrowserContext, type Page } from 'playwright';
 import type { BoundingBox, Viewport, BrowserAction } from '../types/index.js';
-import { executeAction } from './actions.js';
+import { executeAction as dispatchAction } from './actions.js';
 import { createLogger } from '../utils/logger.js';
 
 const logger = createLogger('BrowserRuntime');
@@ -100,7 +100,7 @@ export class BrowserRuntime {
   }
 
   async executeAction(action: BrowserAction): Promise<void> {
-    await executeAction(this.activePage, action);
+    await dispatchAction(this.activePage, action);
   }
 
   async close(): Promise<void> {
