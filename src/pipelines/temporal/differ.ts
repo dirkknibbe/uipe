@@ -1,6 +1,11 @@
 import type { SceneGraph, SceneNode, SceneGraphDiff, NodeModification } from '../../types/index.js';
 
-// Fields compared for modification detection
+// Fields compared for modification detection.
+// Excluded intentionally:
+//   - identity fields (id, tag, role, label, parent) — never change for the same node
+//   - boundingBox — object type; reference equality always differs across pipeline runs
+//   - placeholder, imageAlt, description — omitted for MVP; changes to these produce stable (not modified) nodes
+//   - visualConfidence, structuralConfidence, fusionMethod — pipeline metadata, not UI state
 const COMPARED_FIELDS: (keyof SceneNode)[] = [
   'text', 'value', 'isDisabled', 'isFocused', 'isLoading',
   'visualState', 'interactionType', 'visibilityPercent', 'viewportPosition',

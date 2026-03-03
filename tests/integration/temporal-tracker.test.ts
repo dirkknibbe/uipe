@@ -47,16 +47,10 @@ describe('TemporalTracker integration', () => {
       scrollPosition: { x: 0, y: 0 },
     });
     const transition = tracker.observe(graph);
-    // Same page may produce null diff (all stable) or small diff
-    if (transition) {
-      expect(transition.diff).toBeDefined();
-      expect(transition.timestamp).toBe(graph.timestamp);
-      console.log(`✓ Same-page transition: type=${transition.type}, stable=${transition.diff.stable.length}, modified=${transition.diff.modified.length}`);
-    } else {
-      // Identical snapshots → null transition acceptable
-      console.log('✓ Identical snapshot (null transition)');
-      expect(tracker.getLatest()).toBe(graph);
-    }
+    expect(transition).not.toBeNull();
+    expect(transition!.diff).toBeDefined();
+    expect(transition!.timestamp).toBe(graph.timestamp);
+    console.log(`✓ Same-page transition: type=${transition!.type}, stable=${transition!.diff.stable.length}, modified=${transition!.diff.modified.length}`);
   });
 
   it('navigation to different URL → navigation transition', async () => {
