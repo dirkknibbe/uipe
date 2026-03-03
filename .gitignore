@@ -8,3 +8,4 @@ coverage
 *.swp
 *.swo
 .pnpm-debug.log
+worktrees/
