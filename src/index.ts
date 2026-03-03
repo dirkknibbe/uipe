@@ -5,3 +5,4 @@ export * from './utils/geometry.js';
 export * from './utils/logger.js';
 export { FusionEngine } from './pipelines/fusion/index.js';
 export { toJSON, toCompact } from './pipelines/fusion/serializer.js';
+export { TemporalTracker } from './pipelines/temporal/index.js';
