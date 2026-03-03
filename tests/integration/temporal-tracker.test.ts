@@ -38,6 +38,7 @@ describe('TemporalTracker integration', () => {
   });
 
   it('same page re-observed → transition with mostly stable nodes', async () => {
+    expect(tracker.getLatest()).not.toBeNull();
     await runtime.navigate('https://example.com');
     const nodes = await structural.extractStructure(runtime.getPage());
     const graph = engine.fuse([], nodes, {
@@ -54,10 +55,12 @@ describe('TemporalTracker integration', () => {
     } else {
       // Identical snapshots → null transition acceptable
       console.log('✓ Identical snapshot (null transition)');
+      expect(tracker.getLatest()).toBe(graph);
     }
   });
 
   it('navigation to different URL → navigation transition', async () => {
+    expect(tracker.getLatest()).not.toBeNull();
     // Use a data URI to avoid network dependency
     await runtime.navigate('data:text/html,<html><body><h1>Page 2</h1></body></html>');
     const nodes = await structural.extractStructure(runtime.getPage());
