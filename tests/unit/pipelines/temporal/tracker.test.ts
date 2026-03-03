@@ -24,6 +24,9 @@ describe('TemporalTracker', () => {
     const graph = makeGraph([makeNode('n1')]);
     expect(tracker.observe(graph)).toBeNull();
     expect(tracker.getLatest()).toBe(graph);
+    const graph2 = makeGraph([makeNode('n1'), makeNode('n2')]);
+    tracker.observe(graph2);
+    expect(tracker.getLatest()).toBe(graph2);
   });
 
   it('second observe → returns StateTransition with diff', () => {
@@ -33,6 +36,7 @@ describe('TemporalTracker', () => {
     expect(transition).not.toBeNull();
     expect(transition!.diff.added).toHaveLength(1);
     expect(transition!.diff.added[0].id).toBe('n2');
+    expect(transition!.type).toBe('content_loaded');
   });
 
   it('transition timestamp equals next graph timestamp', () => {
