@@ -7,3 +7,4 @@ export { FusionEngine } from './pipelines/fusion/index.js';
 export { toJSON, toCompact } from './pipelines/fusion/serializer.js';
 export { TemporalTracker } from './pipelines/temporal/index.js';
 export { AffordanceEngine } from './pipelines/affordance/index.js';
+export { affordanceToText } from './mcp/serializer.js';
