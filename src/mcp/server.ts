@@ -6,7 +6,6 @@ import { FusionEngine } from '../pipelines/fusion/index.js';
 import { TemporalTracker } from '../pipelines/temporal/index.js';
 import { AffordanceEngine } from '../pipelines/affordance/index.js';
 import { toJSON, toCompact } from '../pipelines/fusion/serializer.js';
-import type { BrowserAction } from '../types/index.js';
 import { affordanceToText } from './serializer.js';
 
 const VIEWPORT = { width: 1280, height: 720 };
@@ -19,13 +18,11 @@ export function createServer(): McpServer {
   const fusion = new FusionEngine();
   const tracker = new TemporalTracker();
   const affordance = new AffordanceEngine();
-  let launched = false;
+  let launchPromise: Promise<void> | undefined;
 
   async function ensureLaunched(): Promise<void> {
-    if (!launched) {
-      await runtime.launch();
-      launched = true;
-    }
+    if (!launchPromise) launchPromise = runtime.launch();
+    return launchPromise;
   }
 
   async function captureGraph() {
@@ -108,23 +105,21 @@ export function createServer(): McpServer {
     {
       title: 'Execute Browser Action',
       description: 'Execute an action in the browser. After execution the scene is re-captured and returned along with any detected UI transition.',
-      inputSchema: z.object({
-        type: z.enum(['click', 'clickSelector', 'type', 'scroll', 'navigate', 'back', 'pressKey', 'wait'])
-          .describe('Action type'),
-        x: z.number().optional().describe('X coordinate (for click)'),
-        y: z.number().optional().describe('Y coordinate (for click)'),
-        selector: z.string().optional().describe('CSS selector (for clickSelector or type)'),
-        text: z.string().optional().describe('Text to type (for type)'),
-        direction: z.enum(['up', 'down']).optional().describe('Scroll direction'),
-        amount: z.number().optional().describe('Scroll amount in pixels'),
-        url: z.string().optional().describe('URL to navigate to (for navigate)'),
-        key: z.string().optional().describe('Key name to press (for pressKey)'),
-        ms: z.number().optional().describe('Milliseconds to wait (for wait)'),
-      }),
+      inputSchema: z.discriminatedUnion('type', [
+        z.object({ type: z.literal('click'), x: z.number(), y: z.number() }),
+        z.object({ type: z.literal('clickSelector'), selector: z.string() }),
+        z.object({ type: z.literal('type'), text: z.string(), selector: z.string().optional() }),
+        z.object({ type: z.literal('scroll'), direction: z.enum(['up', 'down']), amount: z.number().optional() }),
+        z.object({ type: z.literal('hover'), x: z.number(), y: z.number() }),
+        z.object({ type: z.literal('wait'), ms: z.number() }),
+        z.object({ type: z.literal('navigate'), url: z.string() }),
+        z.object({ type: z.literal('back') }),
+        z.object({ type: z.literal('pressKey'), key: z.string() }),
+      ]),
     },
     async (input) => {
       await ensureLaunched();
-      await runtime.executeAction(input as unknown as BrowserAction);
+      await runtime.executeAction(input);
       const graph = await captureGraph();
       const transition = tracker.observe(graph);
       let text = `Action executed: ${input.type}\n\n` + toCompact(graph);
