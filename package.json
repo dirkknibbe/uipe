@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "description": "Perception layer for AI agents — fuses visual + structural + temporal data into a UI Scene Graph",
   "type": "module",
-  "main": "dist/index.js",
+  "main": "dist/src/index.js",
   "scripts": {
     "build": "tsc",
     "mcp": "node dist/src/mcp/index.js",
