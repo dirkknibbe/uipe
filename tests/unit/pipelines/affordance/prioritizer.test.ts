@@ -34,7 +34,7 @@ describe('assignPriority', () => {
   });
 
   it('visible non-high-priority role → medium', () => {
-    expect(assignPriority(makeNode({ role: 'region', visibilityPercent: 80 }))).toBe('medium');
+    expect(assignPriority(makeNode({ role: 'region', tag: 'div', visibilityPercent: 80 }))).toBe('medium');
   });
 
   it('off-screen node → low', () => {
