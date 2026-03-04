@@ -44,4 +44,8 @@ describe('assignPriority', () => {
   it('visible but barely visible (≤20%) → low', () => {
     expect(assignPriority(makeNode({ viewportPosition: 'visible', visibilityPercent: 10 }))).toBe('low');
   });
+
+  it('visible <a> with non-link role (role: "element") and >50% visibility → high', () => {
+    expect(assignPriority(makeNode({ role: 'element', tag: 'a', visibilityPercent: 80 }))).toBe('high');
+  });
 });
