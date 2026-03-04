@@ -58,7 +58,7 @@ describe('affordanceToText', () => {
     expect(text).toContain('btn1');
     expect(text).toContain('high action outcome');
     expect(text).toContain('clickable');
-    expect(text).toContain('0.75');
+    expect(text).toContain('confidence=0.75');
   });
 
   it('sideEffects rendered when present', () => {

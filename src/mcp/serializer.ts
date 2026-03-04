@@ -17,11 +17,12 @@ export function affordanceToText(
   }
 
   return entries.map(a => {
-    const pred = a.predictions[0];
+    const pred = a.predictions[0]; // MCP view: leading prediction only
+    if (!pred) return null;
     let line = `[${a.priority.toUpperCase()}] ${a.nodeId}: ${pred.predictedOutcome} (${pred.action}, confidence=${pred.confidence.toFixed(2)})`;
     if (pred.sideEffects?.length) {
       line += `\n  → side effects: ${pred.sideEffects.join(', ')}`;
     }
     return line;
-  }).join('\n');
+  }).filter((line): line is string => line !== null).join('\n');
 }
