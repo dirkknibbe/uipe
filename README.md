@@ -22,6 +22,7 @@ Fuses structural (DOM + a11y tree + CSS), visual, and temporal data into a unifi
 | `act` | Execute browser actions: click, type, scroll, hover, keypress, navigate, wait |
 | `get_console_logs` | Return captured browser console messages (filter by type: error/warning/log/info/all) |
 | `get_network_errors` | Return failed network requests (connection refused, 4xx, 5xx, blocked) |
+| `get_screenshot` | Capture a screenshot and return it as an image — lets Claude visually inspect canvas, maps, charts, WebGL |
 
 ### `act` action types
 

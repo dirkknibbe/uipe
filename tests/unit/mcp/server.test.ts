@@ -19,4 +19,8 @@ describe('createServer', () => {
   it('exports get_network_errors tool name', () => {
     expect(TOOL_NAMES).toContain('get_network_errors');
   });
+
+  it('exports get_screenshot tool name', () => {
+    expect(TOOL_NAMES).toContain('get_screenshot');
+  });
 });

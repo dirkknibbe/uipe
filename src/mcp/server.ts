@@ -17,6 +17,7 @@ export const TOOL_NAMES = [
   'act',
   'get_console_logs',
   'get_network_errors',
+  'get_screenshot',
 ] as const;
 
 export function createServer(): McpServer {
@@ -160,7 +161,27 @@ export function createServer(): McpServer {
     },
   );
 
-  // Tool 6: get_network_errors
+  // Tool 6: get_screenshot
+  server.registerTool(
+    'get_screenshot',
+    {
+      title: 'Get Screenshot',
+      description: 'Capture a screenshot of the current page and return it as an image. Use this to visually inspect canvas elements (maps, charts, WebGL), verify layout, or see anything the scene graph cannot describe.',
+      inputSchema: z.object({}),
+    },
+    async () => {
+      const buf = await runtime.screenshot();
+      return {
+        content: [{
+          type: 'image' as const,
+          data: buf.toString('base64'),
+          mimeType: 'image/png',
+        }],
+      };
+    },
+  );
+
+  // Tool 7: get_network_errors
   server.registerTool(
     'get_network_errors',
     {
