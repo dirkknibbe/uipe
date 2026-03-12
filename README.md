@@ -46,15 +46,31 @@ Requires `ANTHROPIC_API_KEY` environment variable to be set.
 
 ## Installation
 
+### From npm
+
 ```bash
-pnpm install
-pnpm build
+npm install -g ui-perception-engine
+```
+
+Or use without installing:
+
+```bash
+npx ui-perception-engine
 ```
 
 Install Playwright browsers (first time only):
 
 ```bash
 npx playwright install chromium
+```
+
+### From source
+
+```bash
+git clone https://github.com/dirkknibbe/uipe.git
+cd uipe
+pnpm install
+pnpm build
 ```
 
 ## Claude Code MCP Configuration
@@ -65,14 +81,43 @@ Add to your Claude Code MCP config (`~/.claude/mcp.json` or project `.mcp.json`)
 {
   "mcpServers": {
     "ui-perception-engine": {
-      "command": "node",
-      "args": ["/path/to/ui-perception-engine/dist/src/mcp/index.js"]
+      "command": "npx",
+      "args": ["ui-perception-engine"]
     }
   }
 }
 ```
 
-Replace `/path/to/ui-perception-engine` with the absolute path to this repo.
+Or if installed globally:
+
+```json
+{
+  "mcpServers": {
+    "ui-perception-engine": {
+      "command": "uipe"
+    }
+  }
+}
+```
+
+Or from a local clone:
+
+```json
+{
+  "mcpServers": {
+    "ui-perception-engine": {
+      "command": "node",
+      "args": ["/path/to/uipe/dist/src/mcp/index.js"]
+    }
+  }
+}
+```
+
+### Environment variables
+
+| Variable | Purpose |
+|----------|---------|
+| `ANTHROPIC_API_KEY` | Required for `visual=true` (Claude Vision detection) |
 
 ## Using with the `live-deployment-check` Skill
 

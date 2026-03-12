@@ -1,9 +1,17 @@
 {
   "name": "ui-perception-engine",
   "version": "0.1.0",
-  "description": "Perception layer for AI agents — fuses visual + structural + temporal data into a UI Scene Graph",
+  "description": "Perception layer for AI agents — fuses visual + structural + temporal data into a UI Scene Graph. MCP server for Claude.",
   "type": "module",
   "main": "dist/src/index.js",
+  "types": "dist/src/index.d.ts",
+  "bin": {
+    "uipe": "dist/src/mcp/index.js"
+  },
+  "files": [
+    "dist/src",
+    "README.md"
+  ],
   "scripts": {
     "build": "tsc",
     "mcp": "node dist/src/mcp/index.js",
@@ -11,7 +19,27 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
-    "lint": "eslint src tests --ext .ts"
+    "lint": "eslint src tests --ext .ts",
+    "prepublishOnly": "pnpm run build"
+  },
+  "keywords": [
+    "mcp",
+    "ai-agent",
+    "ui-testing",
+    "web-scraping",
+    "playwright",
+    "scene-graph",
+    "claude",
+    "perception",
+    "browser-automation"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/dirkknibbe/uipe.git"
+  },
+  "license": "MIT",
+  "engines": {
+    "node": ">=18"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.39.0",
