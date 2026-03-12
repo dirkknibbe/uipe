@@ -2,7 +2,7 @@
 
 A perception layer for AI agents — human-like understanding of web interfaces.
 
-Fuses structural (DOM + a11y tree + CSS), visual, and temporal data into a unified **UI Scene Graph** that an LLM can reason over fluently. Exposed as an MCP server so Claude can navigate and inspect any live URL.
+Fuses structural (DOM + a11y tree + CSS), visual, and temporal data into a unified **UI Scene Graph** that an LLM can reason over fluently. Exposed as an MCP server so agents can navigate and inspect any live URL.
 
 ## What It Does
 
