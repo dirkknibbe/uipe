@@ -91,6 +91,7 @@ export function createServer(config: ServerConfig = {}): McpServer {
     },
     async ({ format, visual: includeVisual }) => {
       if (includeVisual) {
+        await ensureLaunched();
         const graph = await captureGraph(true);
         const transition = tracker.observe(graph);
         let text = format === 'json' ? toJSON(graph) : toCompact(graph);
@@ -172,6 +173,9 @@ export function createServer(config: ServerConfig = {}): McpServer {
       }),
     },
     async ({ type }) => {
+      if (!launchPromise) {
+        return { content: [{ type: 'text' as const, text: 'No browser session. Call navigate first.' }] };
+      }
       const logs = runtime.getConsoleLogs();
       const filtered = type === 'all' ? logs : logs.filter(l => l.type === type);
       if (filtered.length === 0) {
@@ -191,6 +195,7 @@ export function createServer(config: ServerConfig = {}): McpServer {
       inputSchema: z.object({}),
     },
     async () => {
+      await ensureLaunched();
       const buf = await runtime.screenshot();
       return {
         content: [{
@@ -207,15 +212,21 @@ export function createServer(config: ServerConfig = {}): McpServer {
     'get_network_errors',
     {
       title: 'Get Network Errors',
-      description: 'Return failed network requests captured since the last navigate (4xx, 5xx, blocked, connection refused, etc.).',
+      description: 'Return failed network requests captured since the last navigate — includes HTTP errors (4xx, 5xx) and connection-level failures (DNS, refused, CORS blocked).',
       inputSchema: z.object({}),
     },
     async () => {
+      if (!launchPromise) {
+        return { content: [{ type: 'text' as const, text: 'No browser session. Call navigate first.' }] };
+      }
       const errors = runtime.getNetworkErrors();
       if (errors.length === 0) {
         return { content: [{ type: 'text' as const, text: 'No failed network requests captured.' }] };
       }
-      const text = errors.map(e => `[FAILED] ${e.method} ${e.url}\n  Error: ${e.errorText}`).join('\n\n');
+      const text = errors.map(e => {
+        const status = e.statusCode ? ` [${e.statusCode}]` : '';
+        return `[FAILED${status}] ${e.method} ${e.url}\n  Error: ${e.errorText}`;
+      }).join('\n\n');
       return { content: [{ type: 'text' as const, text }] };
     },
   );

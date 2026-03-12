@@ -88,7 +88,7 @@ describe('BrowserRuntime', () => {
     expect(warn!.text).toContain('test-warn-msg');
   });
 
-  it('captures failed network requests', async () => {
+  it('captures failed network requests (connection-level)', async () => {
     await runtime.launch();
     // image pointing at a port nothing is listening on → requestfailed
     await runtime.navigate(
@@ -96,8 +96,27 @@ describe('BrowserRuntime', () => {
     );
     await new Promise(r => setTimeout(r, 500));
     const errors = runtime.getNetworkErrors();
-    expect(errors.length).toBeGreaterThan(0);
-    expect(errors[0].url).toContain('localhost:19999');
+    const connError = errors.find(e => e.url.includes('localhost:19999'));
+    expect(connError).toBeDefined();
+    expect(connError!.statusCode).toBeUndefined();
+  });
+
+  it('captures HTTP error responses (4xx/5xx)', async () => {
+    await runtime.launch();
+    const page = runtime.getPage();
+    // Intercept a route to reliably return 404
+    await page.route('**/test-404-resource', route =>
+      route.fulfill({ status: 404, body: 'Not Found' })
+    );
+    await runtime.navigate('https://example.com');
+    runtime.clearLogs();
+    // Trigger a fetch that returns 404 via our intercepted route
+    await page.evaluate(() => fetch('/test-404-resource').catch(() => {}));
+    await new Promise(r => setTimeout(r, 200));
+    const errors = runtime.getNetworkErrors();
+    const httpError = errors.find(e => e.statusCode === 404);
+    expect(httpError).toBeDefined();
+    expect(httpError!.errorText).toContain('404');
   });
 
   it('clears captured logs', async () => {
@@ -107,5 +126,15 @@ describe('BrowserRuntime', () => {
     runtime.clearLogs();
     expect(runtime.getConsoleLogs()).toHaveLength(0);
     expect(runtime.getNetworkErrors()).toHaveLength(0);
+  });
+
+  it('caps console logs at MAX_LOG_ENTRIES', async () => {
+    await runtime.launch();
+    // Generate many console messages
+    const script = Array.from({ length: 120 }, (_, i) => `console.log("msg-${i}")`).join(';');
+    await runtime.navigate(`data:text/html,<script>${script}</script>`);
+    await new Promise(r => setTimeout(r, 200));
+    const logs = runtime.getConsoleLogs();
+    expect(logs.length).toBeLessThanOrEqual(1000);
   });
 });

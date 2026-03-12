@@ -1,22 +1,13 @@
 import { chromium, type Browser, type BrowserContext, type Page } from 'playwright';
-import type { BoundingBox, Viewport, BrowserAction } from '../types/index.js';
+import type { BoundingBox, Viewport, BrowserAction, ConsoleMessage, NetworkError } from '../types/index.js';
 import { executeAction as dispatchAction } from './actions.js';
 import { createLogger } from '../utils/logger.js';
 
-export interface ConsoleMessage {
-  type: string;
-  text: string;
-  timestamp: number;
-}
-
-export interface NetworkError {
-  url: string;
-  method: string;
-  errorText: string;
-  timestamp: number;
-}
+export type { ConsoleMessage, NetworkError };
 
 const logger = createLogger('BrowserRuntime');
+
+const MAX_LOG_ENTRIES = 1000;
 
 export interface BrowserRuntimeOptions {
   headless?: boolean;
@@ -50,15 +41,30 @@ export class BrowserRuntime {
     this.context = await this.browser.newContext({ viewport: this.options.viewport });
     this.page = await this.context.newPage();
     this.page.on('console', (msg) => {
-      this.consoleLogs.push({ type: msg.type(), text: msg.text(), timestamp: Date.now() });
+      if (this.consoleLogs.length < MAX_LOG_ENTRIES) {
+        this.consoleLogs.push({ type: msg.type(), text: msg.text(), timestamp: Date.now() });
+      }
     });
     this.page.on('requestfailed', (request) => {
-      this.networkErrors.push({
-        url: request.url(),
-        method: request.method(),
-        errorText: request.failure()?.errorText ?? 'unknown',
-        timestamp: Date.now(),
-      });
+      if (this.networkErrors.length < MAX_LOG_ENTRIES) {
+        this.networkErrors.push({
+          url: request.url(),
+          method: request.method(),
+          errorText: request.failure()?.errorText ?? 'unknown',
+          timestamp: Date.now(),
+        });
+      }
+    });
+    this.page.on('response', (response) => {
+      if (response.status() >= 400 && this.networkErrors.length < MAX_LOG_ENTRIES) {
+        this.networkErrors.push({
+          url: response.url(),
+          method: response.request().method(),
+          errorText: `HTTP ${response.status()} ${response.statusText()}`,
+          statusCode: response.status(),
+          timestamp: Date.now(),
+        });
+      }
     });
     logger.info('Browser ready');
   }
