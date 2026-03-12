@@ -65,4 +65,47 @@ describe('BrowserRuntime', () => {
       runtime.executeAction({ type: 'scroll', direction: 'down', amount: 100 })
     ).resolves.not.toThrow();
   });
+
+  it('captures console error messages', async () => {
+    await runtime.launch();
+    await runtime.navigate('data:text/html,<script>console.error("test-error-msg")</script>');
+    // give the page a moment to emit the console event
+    await new Promise(r => setTimeout(r, 100));
+    const logs = runtime.getConsoleLogs();
+    expect(logs.length).toBeGreaterThan(0);
+    const err = logs.find(l => l.type === 'error');
+    expect(err).toBeDefined();
+    expect(err!.text).toContain('test-error-msg');
+  });
+
+  it('captures console warning messages', async () => {
+    await runtime.launch();
+    await runtime.navigate('data:text/html,<script>console.warn("test-warn-msg")</script>');
+    await new Promise(r => setTimeout(r, 100));
+    const logs = runtime.getConsoleLogs();
+    const warn = logs.find(l => l.type === 'warning');
+    expect(warn).toBeDefined();
+    expect(warn!.text).toContain('test-warn-msg');
+  });
+
+  it('captures failed network requests', async () => {
+    await runtime.launch();
+    // image pointing at a port nothing is listening on → requestfailed
+    await runtime.navigate(
+      'data:text/html,<img src="http://localhost:19999/nope.png">'
+    );
+    await new Promise(r => setTimeout(r, 500));
+    const errors = runtime.getNetworkErrors();
+    expect(errors.length).toBeGreaterThan(0);
+    expect(errors[0].url).toContain('localhost:19999');
+  });
+
+  it('clears captured logs', async () => {
+    await runtime.launch();
+    await runtime.navigate('data:text/html,<script>console.error("x")</script>');
+    await new Promise(r => setTimeout(r, 100));
+    runtime.clearLogs();
+    expect(runtime.getConsoleLogs()).toHaveLength(0);
+    expect(runtime.getNetworkErrors()).toHaveLength(0);
+  });
 });

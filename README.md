@@ -20,6 +20,8 @@ Fuses structural (DOM + a11y tree + CSS), visual, and temporal data into a unifi
 | `get_scene` | Re-capture the current scene (compact text or full JSON) |
 | `get_affordances` | List interactive elements ranked by priority |
 | `act` | Execute browser actions: click, type, scroll, hover, keypress, navigate, wait |
+| `get_console_logs` | Return captured browser console messages (filter by type: error/warning/log/info/all) |
+| `get_network_errors` | Return failed network requests (connection refused, 4xx, 5xx, blocked) |
 
 ### `act` action types
 
@@ -72,11 +74,13 @@ The `live-deployment-check` skill pairs directly with this MCP server to visuall
 ### Workflow
 
 ```
-1. navigate(url)        → load the page, get initial scene
-2. get_scene()          → re-capture after JS hydrates (critical for SPAs)
-3. Scan scene output    → look for broken signals (see below)
-4. act() on nav links   → walk routes, verify each one loads
-5. Report findings      → list what's working and what's broken
+1. navigate(url)            → load the page, get initial scene
+2. get_scene()              → re-capture after JS hydrates (critical for SPAs)
+3. get_console_logs()       → check for JS errors (type="error")
+4. get_network_errors()     → check for failed API/resource requests
+5. Scan scene output        → look for broken signals (see below)
+6. act() on nav links       → walk routes, verify each one loads
+7. Report findings          → list what's working and what's broken
 ```
 
 ### Common Signals in Scene Output

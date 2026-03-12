@@ -10,6 +10,15 @@ import { affordanceToText } from './serializer.js';
 
 const VIEWPORT = { width: 1280, height: 720 };
 
+export const TOOL_NAMES = [
+  'navigate',
+  'get_scene',
+  'get_affordances',
+  'act',
+  'get_console_logs',
+  'get_network_errors',
+] as const;
+
 export function createServer(): McpServer {
   const server = new McpServer({ name: 'ui-perception-engine', version: '0.1.0' });
 
@@ -126,6 +135,45 @@ export function createServer(): McpServer {
       if (transition) {
         text += `\n\n[Transition: ${transition.type}]`;
       }
+      return { content: [{ type: 'text' as const, text }] };
+    },
+  );
+
+  // Tool 5: get_console_logs
+  server.registerTool(
+    'get_console_logs',
+    {
+      title: 'Get Console Logs',
+      description: 'Return browser console messages captured since the last navigate. Use type="error" to see only errors, "warning" for warnings, or "all" for everything.',
+      inputSchema: z.object({
+        type: z.enum(['error', 'warning', 'log', 'info', 'all']).default('all').describe('Filter by console message type'),
+      }),
+    },
+    async ({ type }) => {
+      const logs = runtime.getConsoleLogs();
+      const filtered = type === 'all' ? logs : logs.filter(l => l.type === type);
+      if (filtered.length === 0) {
+        return { content: [{ type: 'text' as const, text: `No ${type === 'all' ? '' : type + ' '}console messages captured.` }] };
+      }
+      const text = filtered.map(l => `[${l.type.toUpperCase()}] ${l.text}`).join('\n');
+      return { content: [{ type: 'text' as const, text }] };
+    },
+  );
+
+  // Tool 6: get_network_errors
+  server.registerTool(
+    'get_network_errors',
+    {
+      title: 'Get Network Errors',
+      description: 'Return failed network requests captured since the last navigate (4xx, 5xx, blocked, connection refused, etc.).',
+      inputSchema: z.object({}),
+    },
+    async () => {
+      const errors = runtime.getNetworkErrors();
+      if (errors.length === 0) {
+        return { content: [{ type: 'text' as const, text: 'No failed network requests captured.' }] };
+      }
+      const text = errors.map(e => `[FAILED] ${e.method} ${e.url}\n  Error: ${e.errorText}`).join('\n\n');
       return { content: [{ type: 'text' as const, text }] };
     },
   );

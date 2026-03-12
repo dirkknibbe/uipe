@@ -3,6 +3,19 @@ import type { BoundingBox, Viewport, BrowserAction } from '../types/index.js';
 import { executeAction as dispatchAction } from './actions.js';
 import { createLogger } from '../utils/logger.js';
 
+export interface ConsoleMessage {
+  type: string;
+  text: string;
+  timestamp: number;
+}
+
+export interface NetworkError {
+  url: string;
+  method: string;
+  errorText: string;
+  timestamp: number;
+}
+
 const logger = createLogger('BrowserRuntime');
 
 export interface BrowserRuntimeOptions {
@@ -21,6 +34,8 @@ export class BrowserRuntime {
   private context: BrowserContext | null = null;
   private page: Page | null = null;
   private options: Required<BrowserRuntimeOptions>;
+  private consoleLogs: ConsoleMessage[] = [];
+  private networkErrors: NetworkError[] = [];
 
   constructor(options: BrowserRuntimeOptions = {}) {
     this.options = {
@@ -34,6 +49,17 @@ export class BrowserRuntime {
     this.browser = await chromium.launch({ headless: this.options.headless });
     this.context = await this.browser.newContext({ viewport: this.options.viewport });
     this.page = await this.context.newPage();
+    this.page.on('console', (msg) => {
+      this.consoleLogs.push({ type: msg.type(), text: msg.text(), timestamp: Date.now() });
+    });
+    this.page.on('requestfailed', (request) => {
+      this.networkErrors.push({
+        url: request.url(),
+        method: request.method(),
+        errorText: request.failure()?.errorText ?? 'unknown',
+        timestamp: Date.now(),
+      });
+    });
     logger.info('Browser ready');
   }
 
@@ -101,6 +127,19 @@ export class BrowserRuntime {
       }
       return result;
     }, selector);
+  }
+
+  getConsoleLogs(): ConsoleMessage[] {
+    return [...this.consoleLogs];
+  }
+
+  getNetworkErrors(): NetworkError[] {
+    return [...this.networkErrors];
+  }
+
+  clearLogs(): void {
+    this.consoleLogs = [];
+    this.networkErrors = [];
   }
 
   async executeAction(action: BrowserAction): Promise<void> {
