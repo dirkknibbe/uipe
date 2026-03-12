@@ -5,8 +5,13 @@ import { StructuralPipeline } from '../pipelines/structural/index.js';
 import { FusionEngine } from '../pipelines/fusion/index.js';
 import { TemporalTracker } from '../pipelines/temporal/index.js';
 import { AffordanceEngine } from '../pipelines/affordance/index.js';
+import { VisualPipeline, type VisualPipelineConfig } from '../pipelines/visual/index.js';
 import { toJSON, toCompact } from '../pipelines/fusion/serializer.js';
 import { affordanceToText } from './serializer.js';
+
+export interface ServerConfig {
+  visual?: VisualPipelineConfig;
+}
 
 const VIEWPORT = { width: 1280, height: 720 };
 
@@ -20,7 +25,7 @@ export const TOOL_NAMES = [
   'get_screenshot',
 ] as const;
 
-export function createServer(): McpServer {
+export function createServer(config: ServerConfig = {}): McpServer {
   const server = new McpServer({ name: 'ui-perception-engine', version: '0.1.0' });
 
   const runtime = new BrowserRuntime();
@@ -28,6 +33,7 @@ export function createServer(): McpServer {
   const fusion = new FusionEngine();
   const tracker = new TemporalTracker();
   const affordance = new AffordanceEngine();
+  const visual = config.visual ? new VisualPipeline(config.visual) : null;
   let launchPromise: Promise<void> | undefined;
 
   async function ensureLaunched(): Promise<void> {
@@ -35,9 +41,13 @@ export function createServer(): McpServer {
     return launchPromise;
   }
 
-  async function captureGraph() {
-    const nodes = await structural.extractStructure(runtime.getPage());
-    return fusion.fuse([], nodes, {
+  async function captureGraph(includeVisual = false) {
+    const [screenshot, nodes] = await Promise.all([
+      includeVisual && visual ? runtime.screenshot() : Promise.resolve(null),
+      structural.extractStructure(runtime.getPage()),
+    ]);
+    const visualElements = screenshot && visual ? await visual.detectElements(screenshot) : [];
+    return fusion.fuse(visualElements, nodes, {
       url: runtime.currentUrl(),
       viewport: VIEWPORT,
       scrollPosition: { x: 0, y: 0 },
@@ -52,12 +62,13 @@ export function createServer(): McpServer {
       description: 'Navigate to a URL and return the UI scene graph as compact text. Always call this first before using other tools.',
       inputSchema: z.object({
         url: z.string().describe('The URL to navigate to'),
+        visual: z.boolean().default(false).describe('Enable Claude Vision to detect visual elements (canvas, maps, charts). Requires ANTHROPIC_API_KEY.'),
       }),
     },
-    async ({ url }) => {
+    async ({ url, visual: includeVisual }) => {
       await ensureLaunched();
       await runtime.navigate(url);
-      const graph = await captureGraph();
+      const graph = await captureGraph(includeVisual);
       const transition = tracker.observe(graph);
       let text = toCompact(graph);
       if (transition) {
@@ -72,12 +83,22 @@ export function createServer(): McpServer {
     'get_scene',
     {
       title: 'Get Current Scene',
-      description: 'Return the current UI scene graph. Use format="compact" for a readable tree (default) or "json" for full structured data.',
+      description: 'Return the current UI scene graph. Use format="compact" for a readable tree (default) or "json" for full structured data. Set visual=true to re-capture with Claude Vision analysis.',
       inputSchema: z.object({
         format: z.enum(['compact', 'json']).default('compact').describe('Output format'),
+        visual: z.boolean().default(false).describe('Re-capture scene with Claude Vision visual detection enabled'),
       }),
     },
-    async ({ format }) => {
+    async ({ format, visual: includeVisual }) => {
+      if (includeVisual) {
+        const graph = await captureGraph(true);
+        const transition = tracker.observe(graph);
+        let text = format === 'json' ? toJSON(graph) : toCompact(graph);
+        if (transition) {
+          text += `\n\n[Transition: ${transition.type}]`;
+        }
+        return { content: [{ type: 'text' as const, text }] };
+      }
       const latest = tracker.getLatest();
       if (!latest) {
         return { content: [{ type: 'text' as const, text: 'No scene captured yet. Call navigate first.' }] };

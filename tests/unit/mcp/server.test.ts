@@ -12,6 +12,11 @@ describe('createServer', () => {
     expect(server).toBeTruthy();
   });
 
+  it('accepts visual pipeline config without throwing', () => {
+    const server = createServer({ visual: { provider: 'claude', claude: { apiKey: 'test-key' } } });
+    expect(server).toBeDefined();
+  });
+
   it('exports get_console_logs tool name', () => {
     expect(TOOL_NAMES).toContain('get_console_logs');
   });

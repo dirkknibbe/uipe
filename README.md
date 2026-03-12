@@ -24,6 +24,12 @@ Fuses structural (DOM + a11y tree + CSS), visual, and temporal data into a unifi
 | `get_network_errors` | Return failed network requests (connection refused, 4xx, 5xx, blocked) |
 | `get_screenshot` | Capture a screenshot and return it as an image — lets Claude visually inspect canvas, maps, charts, WebGL |
 
+### Visual detection (`visual=true`)
+
+Both `navigate` and `get_scene` accept an optional `visual: true` parameter. When enabled, the engine takes a screenshot, sends it to **Claude Vision API** to detect UI elements (buttons, inputs, images, icons, etc.), and fuses those visual detections with the DOM-based structural nodes. This produces a richer scene graph — especially for canvas, WebGL, and map elements that are invisible to the DOM.
+
+Requires `ANTHROPIC_API_KEY` environment variable to be set.
+
 ### `act` action types
 
 | Type | Parameters |
