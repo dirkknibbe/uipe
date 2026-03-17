@@ -9,3 +9,6 @@ coverage
 *.swo
 .pnpm-debug.log
 worktrees/
+.venv/
+sidecar/omniparser/weights/
+sidecar/omniparser/.venv/

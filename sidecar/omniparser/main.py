@@ -46,10 +46,12 @@ async def load_models():
 
     try:
         # Florence-2 for icon captioning
+        # Processor from base repo (OmniParser weights don't include tokenizer files)
         caption_processor = AutoProcessor.from_pretrained(
-            "weights/icon_caption_florence",
+            "microsoft/Florence-2-base",
             trust_remote_code=True
         )
+        # Model from local fine-tuned weights
         caption_model = AutoModelForCausalLM.from_pretrained(
             "weights/icon_caption_florence",
             trust_remote_code=True

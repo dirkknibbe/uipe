@@ -4,11 +4,11 @@ FastAPI server that runs OmniParser V2 (YOLOv8 + Florence-2) for UI element dete
 
 ## Setup
 
-### 1. Create conda environment
+### 1. Create Python environment
 
 ```bash
-conda create -n omni python=3.12 -y
-conda activate omni
+python3 -m venv .venv
+source .venv/bin/activate
 ```
 
 ### 2. Install dependencies
@@ -51,7 +51,7 @@ weights/
 ### 4. Run
 
 ```bash
-conda activate omni
+source .venv/bin/activate
 python main.py
 ```
 
