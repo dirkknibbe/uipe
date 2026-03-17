@@ -26,10 +26,24 @@ export type TransitionType =
   | 'list_updated'
   | 'expand_collapse'
   | 'scroll_reveal'
-  | 'animation';
+  | 'animation'
+  | 'page_load'
+  | 'content_update'
+  | 'error_state'
+  | 'loading_state'
+  | 'idle';
 
 export interface StateTransition {
   type: TransitionType;
   timestamp: number;
   diff: SceneGraphDiff;
+  trigger?: string;
+  duration?: number;
+}
+
+export interface KeyframeEvent {
+  frame: Buffer;
+  timestamp: number;
+  trigger: 'periodic' | 'user_event' | 'dom_mutation' | 'significant_diff';
+  metadata?: Record<string, unknown>;
 }

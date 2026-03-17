@@ -1,3 +1,4 @@
+export { Config } from './config.js';
 export { BrowserRuntime } from './browser/runtime.js';
 export { executeAction } from './browser/actions.js';
 export * from './types/index.js';

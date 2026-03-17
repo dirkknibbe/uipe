@@ -6,14 +6,15 @@ import { FusionEngine } from '../pipelines/fusion/index.js';
 import { TemporalTracker } from '../pipelines/temporal/index.js';
 import { AffordanceEngine } from '../pipelines/affordance/index.js';
 import { VisualPipeline, type VisualPipelineConfig } from '../pipelines/visual/index.js';
+import { FrameCapture } from '../pipelines/visual/frame-capture.js';
 import { toJSON, toCompact } from '../pipelines/fusion/serializer.js';
 import { affordanceToText } from './serializer.js';
+import { Config } from '../config.js';
+import type { AnalysisDepth } from '../types/index.js';
 
 export interface ServerConfig {
   visual?: VisualPipelineConfig;
 }
-
-const VIEWPORT = { width: 1280, height: 720 };
 
 export const TOOL_NAMES = [
   'navigate',
@@ -23,6 +24,11 @@ export const TOOL_NAMES = [
   'get_console_logs',
   'get_network_errors',
   'get_screenshot',
+  'detect_elements',
+  'analyze_visual',
+  'compare_states',
+  'watch',
+  'stop_watch',
 ] as const;
 
 export function createServer(config: ServerConfig = {}): McpServer {
@@ -34,6 +40,9 @@ export function createServer(config: ServerConfig = {}): McpServer {
   const tracker = new TemporalTracker();
   const affordance = new AffordanceEngine();
   const visual = config.visual ? new VisualPipeline(config.visual) : null;
+  let frameCapture: FrameCapture | null = null;
+  let keyframeCount = 0;
+  let watchStartTime = 0;
   let launchPromise: Promise<void> | undefined;
 
   async function ensureLaunched(): Promise<void> {
@@ -41,15 +50,20 @@ export function createServer(config: ServerConfig = {}): McpServer {
     return launchPromise;
   }
 
-  async function captureGraph(includeVisual = false) {
+  async function captureGraph(includeVisual: boolean | AnalysisDepth = false) {
+    const shouldCapture = includeVisual !== false && visual;
     const [screenshot, nodes] = await Promise.all([
-      includeVisual && visual ? runtime.screenshot() : Promise.resolve(null),
+      shouldCapture ? runtime.screenshot() : Promise.resolve(null),
       structural.extractStructure(runtime.getPage()),
     ]);
-    const visualElements = screenshot && visual ? await visual.detectElements(screenshot) : [];
+    let visualElements = screenshot && visual ? await visual.detectElements(screenshot) : [];
+    if (screenshot && visual && typeof includeVisual === 'string') {
+      const result = await visual.analyze(screenshot, includeVisual);
+      visualElements = result.elements;
+    }
     return fusion.fuse(visualElements, nodes, {
       url: runtime.currentUrl(),
-      viewport: VIEWPORT,
+      viewport: { width: Config.browser.viewportWidth, height: Config.browser.viewportHeight },
       scrollPosition: { x: 0, y: 0 },
     });
   }
@@ -228,6 +242,176 @@ export function createServer(config: ServerConfig = {}): McpServer {
         return `[FAILED${status}] ${e.method} ${e.url}\n  Error: ${e.errorText}`;
       }).join('\n\n');
       return { content: [{ type: 'text' as const, text }] };
+    },
+  );
+
+  // Tool 8: detect_elements
+  server.registerTool(
+    'detect_elements',
+    {
+      title: 'Detect UI Elements',
+      description: 'Run OmniParser detection only (Tier A — fast, structured). Returns detected UI elements with bounding boxes and labels. Optionally navigate to a URL first.',
+      inputSchema: z.object({
+        url: z.string().optional().describe('Optional URL to navigate to before detecting'),
+      }),
+    },
+    async ({ url }) => {
+      await ensureLaunched();
+      if (url) await runtime.navigate(url);
+      if (!visual) {
+        return { content: [{ type: 'text' as const, text: 'Visual pipeline not configured. Pass visual config to createServer().' }] };
+      }
+      const screenshot = await runtime.screenshot();
+      const result = await visual.analyze(screenshot, 'detect');
+      const text = result.elements.length === 0
+        ? 'No elements detected.'
+        : result.elements.map(el =>
+            `[${el.label}] "${el.description ?? el.text ?? ''}" conf=${el.confidence.toFixed(2)} at (${el.boundingBox.x},${el.boundingBox.y},${el.boundingBox.width}x${el.boundingBox.height})${el.isInteractable ? ' [interactive]' : ''}`
+          ).join('\n');
+      return { content: [{ type: 'text' as const, text }] };
+    },
+  );
+
+  // Tool 9: analyze_visual
+  server.registerTool(
+    'analyze_visual',
+    {
+      title: 'Analyze Visual Quality',
+      description: 'Run Ollama/Qwen3-VL visual understanding (Tier B) on the current page. Returns visual hierarchy, contrast issues, spacing, affordance issues, and overall UX assessment. Requires Ollama running with qwen3-vl model.',
+      inputSchema: z.object({}),
+    },
+    async () => {
+      await ensureLaunched();
+      if (!visual) {
+        return { content: [{ type: 'text' as const, text: 'Visual pipeline not configured. Pass visual config to createServer().' }] };
+      }
+      const screenshot = await runtime.screenshot();
+      const result = await visual.analyze(screenshot, 'understand');
+      if (!result.analysis) {
+        return { content: [{ type: 'text' as const, text: 'Visual analysis unavailable. Ensure Ollama is running with qwen3-vl model.' }] };
+      }
+      const a = result.analysis;
+      const lines = [
+        `Visual Hierarchy: primary focus = "${a.visualHierarchy.primaryFocus}", flow = ${a.visualHierarchy.readingFlow.join(' → ')}`,
+        '',
+        `Contrast Issues (${a.contrastIssues.length}):`,
+        ...a.contrastIssues.map(c => `  - ${c.element}: ${c.issue}${c.estimatedRatio ? ` (ratio: ${c.estimatedRatio})` : ''}`),
+        '',
+        `Spacing Issues (${a.spacingIssues.length}):`,
+        ...a.spacingIssues.map(s => `  - ${s.area}: ${s.issue}`),
+        '',
+        `Affordance Issues (${a.affordanceIssues.length}):`,
+        ...a.affordanceIssues.map(af => `  - ${af.element}: ${af.issue}`),
+        '',
+        `State Indicators (${a.stateIndicators.length}):`,
+        ...a.stateIndicators.map(s => `  - [${s.type}] ${s.element}: ${s.description}`),
+        '',
+        `Overall: ${a.overallAssessment}`,
+      ];
+      return { content: [{ type: 'text' as const, text: lines.join('\n') }] };
+    },
+  );
+
+  // Tool 10: compare_states
+  server.registerTool(
+    'compare_states',
+    {
+      title: 'Compare Scene States',
+      description: 'Re-capture the current scene graph and compare it to the previous state. Returns a diff summary showing what changed.',
+      inputSchema: z.object({}),
+    },
+    async () => {
+      await ensureLaunched();
+      const graph = await captureGraph();
+      const transition = tracker.observe(graph);
+      if (!transition) {
+        return { content: [{ type: 'text' as const, text: 'First observation recorded. Call again to compare against this state.' }] };
+      }
+      const d = transition.diff;
+      const lines = [
+        `Transition: ${transition.type}`,
+        `  Added: ${d.added.length} nodes`,
+        `  Removed: ${d.removed.length} nodes`,
+        `  Modified: ${d.modified.length} nodes`,
+        `  Stable: ${d.stable.length} nodes`,
+      ];
+      if (d.modified.length > 0) {
+        lines.push('', 'Changes:');
+        for (const mod of d.modified.slice(0, 10)) {
+          for (const c of mod.changes) {
+            lines.push(`  ${mod.nodeId}: ${c.field} "${String(c.from)}" → "${String(c.to)}"`);
+          }
+        }
+        if (d.modified.length > 10) {
+          lines.push(`  ... and ${d.modified.length - 10} more`);
+        }
+      }
+      return { content: [{ type: 'text' as const, text: lines.join('\n') }] };
+    },
+  );
+
+  // Tool 11: watch
+  server.registerTool(
+    'watch',
+    {
+      title: 'Watch for Visual Changes',
+      description: 'Start real-time keyframe capture on the current page. Emits keyframes when significant visual changes are detected. Call stop_watch to stop.',
+      inputSchema: z.object({}),
+    },
+    async () => {
+      if (!launchPromise) {
+        return { content: [{ type: 'text' as const, text: 'No browser session. Call navigate first.' }] };
+      }
+      if (frameCapture?.capturing) {
+        return { content: [{ type: 'text' as const, text: 'Already watching. Call stop_watch first.' }] };
+      }
+      frameCapture = new FrameCapture();
+      keyframeCount = 0;
+      watchStartTime = Date.now();
+
+      frameCapture.on('keyframe', async () => {
+        keyframeCount++;
+        try {
+          const graph = await captureGraph();
+          tracker.observe(graph);
+        } catch {
+          // Silently skip — frame capture continues
+        }
+      });
+
+      await frameCapture.start(runtime.getPage());
+      return { content: [{ type: 'text' as const, text: 'Watching page for visual changes. Call stop_watch to stop and get summary.' }] };
+    },
+  );
+
+  // Tool 12: stop_watch
+  server.registerTool(
+    'stop_watch',
+    {
+      title: 'Stop Watching',
+      description: 'Stop real-time keyframe capture and return a summary of what was captured.',
+      inputSchema: z.object({}),
+    },
+    async () => {
+      if (!frameCapture || !frameCapture.capturing) {
+        return { content: [{ type: 'text' as const, text: 'Not currently watching. Call watch first.' }] };
+      }
+      await frameCapture.stop();
+      const durationMs = Date.now() - watchStartTime;
+      const history = tracker.getHistory();
+      const transitionTypes = history.slice(-keyframeCount)
+        .map(t => t.type)
+        .filter((v, i, a) => a.indexOf(v) === i);
+
+      const lines = [
+        `Watch stopped.`,
+        `  Duration: ${(durationMs / 1000).toFixed(1)}s`,
+        `  Keyframes captured: ${keyframeCount}`,
+        `  Total frames processed: ${frameCapture.totalFrames}`,
+        `  Transition types observed: ${transitionTypes.length > 0 ? transitionTypes.join(', ') : 'none'}`,
+      ];
+      frameCapture = null;
+      return { content: [{ type: 'text' as const, text: lines.join('\n') }] };
     },
   );
 

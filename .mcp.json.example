@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "ui-perception-engine": {
+      "command": "node",
+      "args": ["./ui-perception-engine/dist/src/mcp/index.js"],
+      "env": {
+        "OLLAMA_URL": "http://localhost:11434",
+        "OLLAMA_MODEL": "qwen3-vl:8b",
+        "OMNIPARSER_URL": "http://localhost:8100",
+        "ANTHROPIC_API_KEY": ""
+      }
+    }
+  }
+}

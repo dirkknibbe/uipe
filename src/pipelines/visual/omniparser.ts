@@ -11,12 +11,13 @@ export interface OmniParserConfig {
 export interface OmniParserResult {
   elements: VisualElement[];
   processingTimeMs: number;
+  annotatedScreenshot?: string;  // base64 PNG with bounding box overlay
 }
 
 export class OmniParserAdapter {
   private config: Required<OmniParserConfig>;
 
-  constructor(config: OmniParserConfig) {
+  constructor(config: OmniParserConfig = { endpoint: 'http://localhost:8100' }) {
     this.config = { timeoutMs: 10000, ...config };
   }
 
@@ -43,7 +44,7 @@ export class OmniParserAdapter {
     const formData = new FormData();
     formData.append('image', new Blob([new Uint8Array(screenshot)], { type: 'image/png' }), 'screenshot.png');
 
-    const res = await fetch(`${this.config.endpoint}/detect`, {
+    const res = await fetch(`${this.config.endpoint}/parse`, {
       method: 'POST',
       body: formData,
       signal: AbortSignal.timeout(this.config.timeoutMs),
@@ -53,23 +54,40 @@ export class OmniParserAdapter {
       throw new Error(`OmniParser error: ${res.status} ${res.statusText}`);
     }
 
-    const raw = await res.json() as { elements: Array<{
-      label: string;
-      confidence: number;
-      bbox: [number, number, number, number];
-      text?: string;
-    }> };
+    const raw = await res.json() as {
+      elements: Array<{
+        id: number;
+        label: string;
+        caption: string;
+        confidence: number;
+        bbox: [number, number, number, number];  // [x1, y1, x2, y2]
+        interactable: boolean;
+        text: string | null;
+      }>;
+      annotated_image?: string;
+    };
 
-    const elements: VisualElement[] = raw.elements.map((el, i) => ({
-      id: `omni-${i}`,
+    const elements: VisualElement[] = raw.elements.map((el) => ({
+      id: `omni-${el.id}`,
       label: el.label,
       confidence: el.confidence,
-      boundingBox: { x: el.bbox[0], y: el.bbox[1], width: el.bbox[2], height: el.bbox[3] },
-      text: el.text,
+      boundingBox: {
+        x: el.bbox[0],
+        y: el.bbox[1],
+        width: el.bbox[2] - el.bbox[0],
+        height: el.bbox[3] - el.bbox[1],
+      },
+      text: el.text ?? undefined,
+      description: el.caption,
+      isInteractable: el.interactable,
       visualProperties: {},
     }));
 
     logger.info('OmniParser detected elements', { count: elements.length });
-    return { elements, processingTimeMs: Date.now() - start };
+    return {
+      elements,
+      processingTimeMs: Date.now() - start,
+      annotatedScreenshot: raw.annotated_image,
+    };
   }
 }
