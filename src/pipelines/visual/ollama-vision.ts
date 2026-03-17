@@ -68,6 +68,7 @@ Respond in JSON format:
           num_ctx: 8192,
         },
       }),
+      signal: AbortSignal.timeout(Config.vision.ollamaTimeoutMs),
     });
 
     if (!response.ok) {

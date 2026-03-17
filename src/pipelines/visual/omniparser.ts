@@ -1,4 +1,5 @@
 import type { VisualElement } from '../../types/index.js';
+import { Config } from '../../config.js';
 import { createLogger } from '../../utils/logger.js';
 
 const logger = createLogger('OmniParser');
@@ -18,7 +19,7 @@ export class OmniParserAdapter {
   private config: Required<OmniParserConfig>;
 
   constructor(config: OmniParserConfig = { endpoint: 'http://localhost:8100' }) {
-    this.config = { timeoutMs: 10000, ...config };
+    this.config = { timeoutMs: Config.vision.omniparserTimeoutMs, ...config };
   }
 
   async isAvailable(): Promise<boolean> {
