@@ -1,0 +1,9 @@
+torch
+torchvision
+ultralytics
+transformers
+fastapi
+uvicorn
+python-multipart
+pillow
+huggingface_hub
