@@ -2,9 +2,10 @@ import 'dotenv/config';
 
 export const Config = {
   vision: {
+    provider: (process.env.VISION_PROVIDER as 'omniparser' | 'claude' | 'auto') || 'claude',
     ollamaUrl: process.env.OLLAMA_URL || 'http://localhost:11434',
-    ollamaModel: process.env.OLLAMA_MODEL || 'qwen3-vl:8b',
-    ollamaTimeoutMs: Number(process.env.OLLAMA_TIMEOUT_MS) || 180000,
+    ollamaModel: process.env.OLLAMA_MODEL || 'llava:7b',
+    ollamaTimeoutMs: Number(process.env.OLLAMA_TIMEOUT_MS) || 300000,
     omniparserUrl: process.env.OMNIPARSER_URL || 'http://localhost:8100',
     omniparserTimeoutMs: Number(process.env.OMNIPARSER_TIMEOUT_MS) || 120000,
     anthropicApiKey: process.env.ANTHROPIC_API_KEY || '',

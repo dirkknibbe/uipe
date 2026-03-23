@@ -32,7 +32,7 @@ describe('Config', () => {
     expect(Config.browser.viewportHeight).toBe(720);
     expect(Config.browser.headless).toBe(true);
     expect(Config.vision.ollamaUrl).toBe('http://localhost:11434');
-    expect(Config.vision.ollamaModel).toBe('qwen3-vl:8b');
+    expect(Config.vision.ollamaModel).toBe('llava:7b');
     expect(Config.vision.omniparserUrl).toBe('http://localhost:8100');
     expect(Config.vision.anthropicApiKey).toBe('');
     expect(Config.frameCapture.baseFps).toBe(5);
