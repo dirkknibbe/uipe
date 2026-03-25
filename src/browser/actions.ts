@@ -42,6 +42,9 @@ export async function executeAction(page: Page, action: BrowserAction): Promise<
     case 'pressKey':
       await page.keyboard.press(action.key);
       break;
+    case 'setViewport':
+      await page.setViewportSize({ width: action.width, height: action.height });
+      break;
     default: {
       const exhaustive: never = action;
       throw new Error(`Unknown action type: ${(exhaustive as { type: string }).type}`);

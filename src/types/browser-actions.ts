@@ -7,4 +7,5 @@ export type BrowserAction =
   | { type: 'wait'; ms: number }
   | { type: 'navigate'; url: string }
   | { type: 'back' }
-  | { type: 'pressKey'; key: string };
+  | { type: 'pressKey'; key: string }
+  | { type: 'setViewport'; width: number; height: number };
