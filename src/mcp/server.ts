@@ -152,7 +152,7 @@ export function createServer(config: ServerConfig = {}): McpServer {
       title: 'Execute Browser Action',
       description: 'Execute an action in the browser. After execution the scene is re-captured and returned along with any detected UI transition.',
       inputSchema: z.object({
-        type: z.enum(['click', 'clickSelector', 'type', 'scroll', 'hover', 'wait', 'navigate', 'back', 'pressKey'])
+        type: z.enum(['click', 'clickSelector', 'type', 'scroll', 'hover', 'wait', 'navigate', 'back', 'pressKey', 'setViewport'])
           .describe('Action type to execute'),
         x: z.number().optional().describe('X coordinate (for click, hover)'),
         y: z.number().optional().describe('Y coordinate (for click, hover)'),
@@ -163,6 +163,9 @@ export function createServer(config: ServerConfig = {}): McpServer {
         ms: z.number().optional().describe('Wait duration in milliseconds (for wait)'),
         url: z.string().optional().describe('URL to navigate to (for navigate)'),
         key: z.string().optional().describe('Key to press (for pressKey, e.g. "Enter", "Escape")'),
+        width: z.number().optional().describe('Viewport width in pixels (for setViewport)'),
+        height: z.number().optional().describe('Viewport height in pixels (for setViewport)'),
+        visible: z.boolean().optional().describe('Filter to visible elements only (default true, for clickSelector)'),
       }),
     },
     async (input) => {
