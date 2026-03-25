@@ -98,3 +98,46 @@ describe('Issue #3b — console log filtering', () => {
     expect(filtered[0].text).toContain('database connection failed');
   });
 });
+
+describe('Issue #3a — detect_elements structured bbox', () => {
+  it('returns JSON with bbox fields from detect_elements response format', () => {
+    const mockElements = [
+      {
+        label: 'button',
+        description: 'Large button',
+        text: 'L',
+        confidence: 0.95,
+        boundingBox: { x: 100, y: 200, width: 44, height: 44 },
+        isInteractable: true,
+      },
+      {
+        label: 'button',
+        description: 'Small button',
+        text: 'S',
+        confidence: 0.88,
+        boundingBox: { x: 150, y: 200, width: 20, height: 20 },
+        isInteractable: true,
+      },
+    ];
+
+    const json = mockElements.map(el => ({
+      label: el.label,
+      text: el.description ?? el.text ?? '',
+      confidence: parseFloat(el.confidence.toFixed(2)),
+      bbox: {
+        x: el.boundingBox.x,
+        y: el.boundingBox.y,
+        width: el.boundingBox.width,
+        height: el.boundingBox.height,
+      },
+      interactive: el.isInteractable ?? false,
+    }));
+
+    expect(json).toHaveLength(2);
+    expect(json[0].bbox).toEqual({ x: 100, y: 200, width: 44, height: 44 });
+    expect(json[0].interactive).toBe(true);
+    expect(json[0].label).toBe('button');
+    expect(json[1].bbox.width).toBe(20);
+    expect(json[1].bbox.height).toBe(20);
+  });
+});

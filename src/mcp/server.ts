@@ -270,12 +270,22 @@ export function createServer(config: ServerConfig = {}): McpServer {
       }
       const screenshot = await runtime.screenshot();
       const result = await visual.analyze(screenshot, 'detect');
-      const text = result.elements.length === 0
-        ? 'No elements detected.'
-        : result.elements.map(el =>
-            `[${el.label}] "${el.description ?? el.text ?? ''}" conf=${el.confidence.toFixed(2)} at (${el.boundingBox.x},${el.boundingBox.y},${el.boundingBox.width}x${el.boundingBox.height})${el.isInteractable ? ' [interactive]' : ''}`
-          ).join('\n');
-      return { content: [{ type: 'text' as const, text }] };
+      if (result.elements.length === 0) {
+        return { content: [{ type: 'text' as const, text: 'No elements detected.' }] };
+      }
+      const elements = result.elements.map(el => ({
+        label: el.label,
+        text: el.description ?? el.text ?? '',
+        confidence: parseFloat(el.confidence.toFixed(2)),
+        bbox: {
+          x: el.boundingBox.x,
+          y: el.boundingBox.y,
+          width: el.boundingBox.width,
+          height: el.boundingBox.height,
+        },
+        interactive: el.isInteractable ?? false,
+      }));
+      return { content: [{ type: 'text' as const, text: JSON.stringify(elements, null, 2) }] };
     },
   );
 
