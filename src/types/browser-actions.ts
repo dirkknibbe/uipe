@@ -1,6 +1,6 @@
 export type BrowserAction =
   | { type: 'click'; x: number; y: number }
-  | { type: 'clickSelector'; selector: string }
+  | { type: 'clickSelector'; selector: string; visible?: boolean }
   | { type: 'type'; text: string; selector?: string }
   | { type: 'scroll'; direction: 'up' | 'down'; amount?: number }
   | { type: 'hover'; x: number; y: number }

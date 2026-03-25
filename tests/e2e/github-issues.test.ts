@@ -38,3 +38,30 @@ describe('Issue #1 — setViewport', () => {
     expect(desktopVisible).toBe(true);
   });
 });
+
+describe('Issue #2 — clickSelector visibility', () => {
+  let runtime: BrowserRuntime;
+
+  beforeAll(async () => {
+    runtime = new BrowserRuntime({ headless: true });
+    await runtime.launch();
+    await runtime.navigate(fixtureUrl);
+  });
+
+  afterAll(async () => {
+    await runtime.close();
+  });
+
+  it('clicks visible button when selector matches both visible and hidden elements (default visible=true)', async () => {
+    const page = runtime.getPage();
+    await executeAction(page, { type: 'clickSelector', selector: 'button[aria-label="Toggle theme"]' });
+    // If we got here without throwing, the test passes
+  });
+
+  it('throws strict mode violation when visible=false and selector matches multiple elements', async () => {
+    const page = runtime.getPage();
+    await expect(
+      executeAction(page, { type: 'clickSelector', selector: 'button[aria-label="Toggle theme"]', visible: false })
+    ).rejects.toThrow(/strict mode violation/);
+  });
+});
