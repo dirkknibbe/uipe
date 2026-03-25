@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>UIPE Test Fixture</title>
+  <style>
+    /* Issue #1: Responsive layout — .mobile-only hidden above 768px */
+    .mobile-only {
+      display: none;
+    }
+    @media (max-width: 767px) {
+      .mobile-only {
+        display: block;
+      }
+      .desktop-only {
+        display: none;
+      }
+    }
+
+    /* Issue #2: Duplicate buttons — mobile drawer hidden */
+    .mobile-drawer {
+      display: none;
+    }
+
+    /* Issue #3a: Known-size elements */
+    .btn-large {
+      width: 44px;
+      height: 44px;
+      padding: 0;
+      box-sizing: border-box;
+    }
+    .btn-small {
+      width: 20px;
+      height: 20px;
+      padding: 0;
+      box-sizing: border-box;
+    }
+  </style>
+</head>
+<body>
+  <h1>UIPE Test Page</h1>
+
+  <!-- Issue #1: Responsive elements -->
+  <div class="desktop-only" data-testid="desktop-banner">Desktop View</div>
+  <div class="mobile-only" data-testid="mobile-banner">Mobile View</div>
+
+  <!-- Issue #2: Visible sidebar button -->
+  <aside data-testid="sidebar">
+    <button aria-label="Toggle theme" data-testid="theme-btn-visible">Theme</button>
+  </aside>
+
+  <!-- Issue #2: Hidden duplicate button (mobile drawer) -->
+  <div class="mobile-drawer" data-testid="mobile-drawer">
+    <button aria-label="Toggle theme" data-testid="theme-btn-hidden">Theme</button>
+  </div>
+
+  <!-- Issue #3a: Known-size buttons for bbox verification -->
+  <button class="btn-large" data-testid="btn-44" aria-label="Large button">L</button>
+  <button class="btn-small" data-testid="btn-20" aria-label="Small button">S</button>
+
+  <!-- Issue #3b: Console noise -->
+  <script>
+    console.error("setRTLTextPlugin cannot be called multiple times");
+    console.error("Real app error: database connection failed");
+    console.warn("Deprecation warning: use v2 API");
+  </script>
+</body>
+</html>
