@@ -6,7 +6,7 @@ import { Config } from '../config.js';
 async function main(): Promise<void> {
   const server = createServer({
     visual: {
-      provider: 'auto',
+      provider: Config.vision.provider,
       omniparser: { endpoint: Config.vision.omniparserUrl },
       claude: { apiKey: Config.vision.anthropicApiKey },
       ollama: { baseUrl: Config.vision.ollamaUrl, model: Config.vision.ollamaModel },

@@ -66,6 +66,7 @@ Respond in JSON format:
         options: {
           temperature: 0.3,
           num_ctx: 8192,
+          num_predict: 2048,
         },
       }),
       signal: AbortSignal.timeout(Config.vision.ollamaTimeoutMs),
@@ -75,14 +76,45 @@ Respond in JSON format:
       throw new Error(`Ollama error: ${response.status} ${response.statusText}`);
     }
 
-    const data = await response.json() as { message: { content: string } };
-    const content = data.message.content;
+    const data = await response.json() as { message: { content: string; thinking?: string } };
+    // Qwen3-VL uses thinking mode by default — content may be empty while thinking has the analysis
+    const rawContent = data.message.content || data.message.thinking || '';
 
-    // Strip markdown fences if present
-    const jsonStr = content.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
+    // Strip markdown fences and <think> tags if present
+    const cleaned = rawContent
+      .replace(/<think>[\s\S]*?<\/think>/g, '')
+      .replace(/```json\n?/g, '')
+      .replace(/```\n?/g, '')
+      .trim();
+
+    // Try to extract JSON from the response
+    const jsonMatch = cleaned.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) {
+      logger.warn('No JSON found in Ollama response, returning raw analysis');
+      return {
+        visualHierarchy: { primaryFocus: 'unknown', readingFlow: [] },
+        contrastIssues: [],
+        spacingIssues: [],
+        affordanceIssues: [],
+        stateIndicators: [],
+        overallAssessment: cleaned || 'Analysis incomplete — model may need more generation tokens on CPU',
+      } as VisualUnderstanding;
+    }
 
     logger.info('Ollama analysis complete');
-    return JSON.parse(jsonStr) as VisualUnderstanding;
+    try {
+      return JSON.parse(jsonMatch[0]) as VisualUnderstanding;
+    } catch {
+      logger.warn('Ollama returned malformed JSON, returning raw text as assessment');
+      return {
+        visualHierarchy: { primaryFocus: 'unknown', readingFlow: [] },
+        contrastIssues: [],
+        spacingIssues: [],
+        affordanceIssues: [],
+        stateIndicators: [],
+        overallAssessment: cleaned,
+      } as VisualUnderstanding;
+    }
   }
 
   async healthCheck(): Promise<boolean> {
@@ -90,7 +122,8 @@ Respond in JSON format:
       const res = await fetch(`${this.baseUrl}/api/tags`);
       if (!res.ok) return false;
       const data = await res.json() as { models?: Array<{ name: string }> };
-      return data.models?.some(m => m.name.startsWith('qwen3-vl')) ?? false;
+      const targetModel = this.model.split(':')[0];
+      return data.models?.some(m => m.name.startsWith(targetModel)) ?? false;
     } catch {
       return false;
     }

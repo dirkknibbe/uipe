@@ -151,21 +151,26 @@ export function createServer(config: ServerConfig = {}): McpServer {
     {
       title: 'Execute Browser Action',
       description: 'Execute an action in the browser. After execution the scene is re-captured and returned along with any detected UI transition.',
-      inputSchema: z.discriminatedUnion('type', [
-        z.object({ type: z.literal('click'), x: z.number(), y: z.number() }),
-        z.object({ type: z.literal('clickSelector'), selector: z.string() }),
-        z.object({ type: z.literal('type'), text: z.string(), selector: z.string().optional() }),
-        z.object({ type: z.literal('scroll'), direction: z.enum(['up', 'down']), amount: z.number().optional() }),
-        z.object({ type: z.literal('hover'), x: z.number(), y: z.number() }),
-        z.object({ type: z.literal('wait'), ms: z.number() }),
-        z.object({ type: z.literal('navigate'), url: z.string() }),
-        z.object({ type: z.literal('back') }),
-        z.object({ type: z.literal('pressKey'), key: z.string() }),
-      ]),
+      inputSchema: z.object({
+        type: z.enum(['click', 'clickSelector', 'type', 'scroll', 'hover', 'wait', 'navigate', 'back', 'pressKey', 'setViewport'])
+          .describe('Action type to execute'),
+        x: z.number().optional().describe('X coordinate (for click, hover)'),
+        y: z.number().optional().describe('Y coordinate (for click, hover)'),
+        selector: z.string().optional().describe('CSS selector (for clickSelector, type)'),
+        text: z.string().optional().describe('Text to type (for type action)'),
+        direction: z.enum(['up', 'down']).optional().describe('Scroll direction (for scroll)'),
+        amount: z.number().optional().describe('Scroll amount in pixels (for scroll)'),
+        ms: z.number().optional().describe('Wait duration in milliseconds (for wait)'),
+        url: z.string().optional().describe('URL to navigate to (for navigate)'),
+        key: z.string().optional().describe('Key to press (for pressKey, e.g. "Enter", "Escape")'),
+        width: z.number().optional().describe('Viewport width in pixels (for setViewport)'),
+        height: z.number().optional().describe('Viewport height in pixels (for setViewport)'),
+        visible: z.boolean().optional().describe('Filter to visible elements only (default true, for clickSelector)'),
+      }),
     },
     async (input) => {
       await ensureLaunched();
-      await runtime.executeAction(input);
+      await runtime.executeAction(input as import('../types/browser-actions.js').BrowserAction);
       const graph = await captureGraph();
       const transition = tracker.observe(graph);
       let text = `Action executed: ${input.type}\n\n` + toCompact(graph);
@@ -184,14 +189,19 @@ export function createServer(config: ServerConfig = {}): McpServer {
       description: 'Return browser console messages captured since the last navigate. Use type="error" to see only errors, "warning" for warnings, or "all" for everything.',
       inputSchema: z.object({
         type: z.enum(['error', 'warning', 'log', 'info', 'all']).default('all').describe('Filter by console message type'),
+        excludePattern: z.string().optional().describe('Regex pattern — messages matching this are excluded (e.g. "HMR|setRTLTextPlugin")'),
       }),
     },
-    async ({ type }) => {
+    async ({ type, excludePattern }) => {
       if (!launchPromise) {
         return { content: [{ type: 'text' as const, text: 'No browser session. Call navigate first.' }] };
       }
       const logs = runtime.getConsoleLogs();
-      const filtered = type === 'all' ? logs : logs.filter(l => l.type === type);
+      let filtered = type === 'all' ? logs : logs.filter(l => l.type === type);
+      if (excludePattern) {
+        const re = new RegExp(excludePattern);
+        filtered = filtered.filter(l => !re.test(l.text));
+      }
       if (filtered.length === 0) {
         return { content: [{ type: 'text' as const, text: `No ${type === 'all' ? '' : type + ' '}console messages captured.` }] };
       }
@@ -263,12 +273,22 @@ export function createServer(config: ServerConfig = {}): McpServer {
       }
       const screenshot = await runtime.screenshot();
       const result = await visual.analyze(screenshot, 'detect');
-      const text = result.elements.length === 0
-        ? 'No elements detected.'
-        : result.elements.map(el =>
-            `[${el.label}] "${el.description ?? el.text ?? ''}" conf=${el.confidence.toFixed(2)} at (${el.boundingBox.x},${el.boundingBox.y},${el.boundingBox.width}x${el.boundingBox.height})${el.isInteractable ? ' [interactive]' : ''}`
-          ).join('\n');
-      return { content: [{ type: 'text' as const, text }] };
+      if (result.elements.length === 0) {
+        return { content: [{ type: 'text' as const, text: 'No elements detected.' }] };
+      }
+      const elements = result.elements.map(el => ({
+        label: el.label,
+        text: el.description ?? el.text ?? '',
+        confidence: parseFloat(el.confidence.toFixed(2)),
+        bbox: {
+          x: el.boundingBox.x,
+          y: el.boundingBox.y,
+          width: el.boundingBox.width,
+          height: el.boundingBox.height,
+        },
+        interactive: el.isInteractable ?? false,
+      }));
+      return { content: [{ type: 'text' as const, text: JSON.stringify(elements, null, 2) }] };
     },
   );
 
@@ -288,25 +308,26 @@ export function createServer(config: ServerConfig = {}): McpServer {
       const screenshot = await runtime.screenshot();
       const result = await visual.analyze(screenshot, 'understand');
       if (!result.analysis) {
-        return { content: [{ type: 'text' as const, text: 'Visual analysis unavailable. Ensure Ollama is running with qwen3-vl model.' }] };
+        return { content: [{ type: 'text' as const, text: 'Visual analysis unavailable. Ensure Ollama is running with a vision model (e.g. llava:7b).' }] };
       }
       const a = result.analysis;
+      const vh = a.visualHierarchy ?? { primaryFocus: 'unknown', readingFlow: [] };
       const lines = [
-        `Visual Hierarchy: primary focus = "${a.visualHierarchy.primaryFocus}", flow = ${a.visualHierarchy.readingFlow.join(' → ')}`,
+        `Visual Hierarchy: primary focus = "${vh.primaryFocus}", flow = ${(vh.readingFlow ?? []).join(' → ')}`,
         '',
-        `Contrast Issues (${a.contrastIssues.length}):`,
-        ...a.contrastIssues.map(c => `  - ${c.element}: ${c.issue}${c.estimatedRatio ? ` (ratio: ${c.estimatedRatio})` : ''}`),
+        `Contrast Issues (${(a.contrastIssues ?? []).length}):`,
+        ...(a.contrastIssues ?? []).map(c => `  - ${c.element}: ${c.issue}${c.estimatedRatio ? ` (ratio: ${c.estimatedRatio})` : ''}`),
         '',
-        `Spacing Issues (${a.spacingIssues.length}):`,
-        ...a.spacingIssues.map(s => `  - ${s.area}: ${s.issue}`),
+        `Spacing Issues (${(a.spacingIssues ?? []).length}):`,
+        ...(a.spacingIssues ?? []).map(s => `  - ${s.area}: ${s.issue}`),
         '',
-        `Affordance Issues (${a.affordanceIssues.length}):`,
-        ...a.affordanceIssues.map(af => `  - ${af.element}: ${af.issue}`),
+        `Affordance Issues (${(a.affordanceIssues ?? []).length}):`,
+        ...(a.affordanceIssues ?? []).map(af => `  - ${af.element}: ${af.issue}`),
         '',
-        `State Indicators (${a.stateIndicators.length}):`,
-        ...a.stateIndicators.map(s => `  - [${s.type}] ${s.element}: ${s.description}`),
+        `State Indicators (${(a.stateIndicators ?? []).length}):`,
+        ...(a.stateIndicators ?? []).map(s => `  - [${s.type}] ${s.element}: ${s.description}`),
         '',
-        `Overall: ${a.overallAssessment}`,
+        `Overall: ${a.overallAssessment ?? 'No assessment available'}`,
       ];
       return { content: [{ type: 'text' as const, text: lines.join('\n') }] };
     },

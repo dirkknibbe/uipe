@@ -11,9 +11,13 @@ export async function executeAction(page: Page, action: BrowserAction): Promise<
     case 'click':
       await page.mouse.click(action.x, action.y);
       break;
-    case 'clickSelector':
-      await page.locator(action.selector).click();
+    case 'clickSelector': {
+      const locator = action.visible === false
+        ? page.locator(action.selector)
+        : page.locator(action.selector).filter({ visible: true });
+      await locator.click();
       break;
+    }
     case 'type':
       if (action.selector) {
         await page.locator(action.selector).fill(action.text);
@@ -41,6 +45,9 @@ export async function executeAction(page: Page, action: BrowserAction): Promise<
       break;
     case 'pressKey':
       await page.keyboard.press(action.key);
+      break;
+    case 'setViewport':
+      await page.setViewportSize({ width: action.width, height: action.height });
       break;
     default: {
       const exhaustive: never = action;

@@ -12,3 +12,4 @@ worktrees/
 .venv/
 sidecar/omniparser/weights/
 sidecar/omniparser/.venv/
+*.pyc
