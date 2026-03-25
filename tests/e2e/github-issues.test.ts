@@ -65,3 +65,36 @@ describe('Issue #2 — clickSelector visibility', () => {
     ).rejects.toThrow(/strict mode violation/);
   });
 });
+
+describe('Issue #3b — console log filtering', () => {
+  let runtime: BrowserRuntime;
+
+  beforeAll(async () => {
+    runtime = new BrowserRuntime({ headless: true });
+    await runtime.launch();
+    await runtime.navigate(fixtureUrl);
+    // Wait for console messages to be captured
+    await runtime.getPage().waitForTimeout(500);
+  });
+
+  afterAll(async () => {
+    await runtime.close();
+  });
+
+  it('returns all error logs without filtering', () => {
+    const logs = runtime.getConsoleLogs();
+    const errors = logs.filter(l => l.type === 'error');
+    expect(errors.length).toBe(2);
+    expect(errors.some(l => l.text.includes('setRTLTextPlugin'))).toBe(true);
+    expect(errors.some(l => l.text.includes('database connection failed'))).toBe(true);
+  });
+
+  it('excludes logs matching excludePattern', () => {
+    const logs = runtime.getConsoleLogs();
+    const errors = logs.filter(l => l.type === 'error');
+    const re = new RegExp('setRTLTextPlugin');
+    const filtered = errors.filter(l => !re.test(l.text));
+    expect(filtered.length).toBe(1);
+    expect(filtered[0].text).toContain('database connection failed');
+  });
+});

@@ -186,14 +186,19 @@ export function createServer(config: ServerConfig = {}): McpServer {
       description: 'Return browser console messages captured since the last navigate. Use type="error" to see only errors, "warning" for warnings, or "all" for everything.',
       inputSchema: z.object({
         type: z.enum(['error', 'warning', 'log', 'info', 'all']).default('all').describe('Filter by console message type'),
+        excludePattern: z.string().optional().describe('Regex pattern — messages matching this are excluded (e.g. "HMR|setRTLTextPlugin")'),
       }),
     },
-    async ({ type }) => {
+    async ({ type, excludePattern }) => {
       if (!launchPromise) {
         return { content: [{ type: 'text' as const, text: 'No browser session. Call navigate first.' }] };
       }
       const logs = runtime.getConsoleLogs();
-      const filtered = type === 'all' ? logs : logs.filter(l => l.type === type);
+      let filtered = type === 'all' ? logs : logs.filter(l => l.type === type);
+      if (excludePattern) {
+        const re = new RegExp(excludePattern);
+        filtered = filtered.filter(l => !re.test(l.text));
+      }
       if (filtered.length === 0) {
         return { content: [{ type: 'text' as const, text: `No ${type === 'all' ? '' : type + ' '}console messages captured.` }] };
       }
