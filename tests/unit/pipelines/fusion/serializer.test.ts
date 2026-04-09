@@ -48,6 +48,56 @@ describe('serializer', () => {
     expect(compact).toContain('Click me');
   });
 
+  it('toCompact collapses single-child generic wrapper chains', () => {
+    const wrapper = (id: string, children: string[], parent?: string): SceneNode => ({
+      ...makeNode(id, 'div', 'element', parent, children),
+      interactionType: 'static', text: undefined,
+    });
+    const graphWithWrappers: SceneGraph = {
+      ...graph,
+      nodes: [
+        wrapper('w1', ['w2']),
+        wrapper('w2', ['w3'], 'w1'),
+        wrapper('w3', ['leaf'], 'w2'),
+        { ...makeNode('leaf', 'button', 'button', 'w3'), text: 'Click me' },
+      ],
+      rootNodeIds: ['w1'],
+    };
+    const compact = toCompact(graphWithWrappers);
+    // Wrapper chain should collapse to a single line containing the button.
+    expect(compact.split('\n')).toHaveLength(1);
+    expect(compact).toContain('button');
+    expect(compact).toContain('Click me');
+  });
+
+  it('toCompact omits text on non-leaf nodes', () => {
+    const graphWithParentText: SceneGraph = {
+      ...graph,
+      nodes: [
+        { ...makeNode('p', 'section', 'region', undefined, ['c']), text: 'parent inherited text' },
+        { ...makeNode('c', 'button', 'button', 'p'), text: 'Click me' },
+      ],
+      rootNodeIds: ['p'],
+    };
+    const compact = toCompact(graphWithParentText);
+    expect(compact).not.toContain('parent inherited text');
+    expect(compact).toContain('Click me');
+  });
+
+  it('toCompact does not recurse into svg internals', () => {
+    const graphWithSvg: SceneGraph = {
+      ...graph,
+      nodes: [
+        { ...makeNode('s', 'svg', 'graphic', undefined, ['p1']), tag: 'svg' },
+        { ...makeNode('p1', 'path', 'graphic', 's'), tag: 'path' },
+      ],
+      rootNodeIds: ['s'],
+    };
+    const compact = toCompact(graphWithSvg);
+    expect(compact).toContain('svg');
+    expect(compact).not.toContain('path');
+  });
+
   it('toCompact marks disabled elements', () => {
     const graphWithDisabled: SceneGraph = {
       ...graph,
