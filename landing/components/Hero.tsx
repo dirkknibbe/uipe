@@ -10,7 +10,7 @@ const SceneGraph = dynamic(
 
 export function Hero() {
   return (
-    <section className="relative min-h-[100dvh] overflow-hidden">
+    <section className="relative min-h-[100dvh] overflow-hidden border-b border-[color:var(--color-line)]/40">
       {/* Top bar — thin hairline rule, spans full width */}
       <header className="relative z-20 border-b border-[color:var(--color-line)]/40">
         <div className="flex items-center justify-between px-6 sm:px-10 h-16">
@@ -43,6 +43,16 @@ export function Hero() {
           </nav>
         </div>
       </header>
+
+      {/* Editorial version stamp — top-right of hero, below nav */}
+      <div
+        aria-hidden
+        className="pointer-events-none absolute top-20 right-6 sm:right-10 z-20 font-mono text-[10px] uppercase tracking-[0.22em] text-[color:var(--color-ink-faint)]"
+      >
+        v0.1.0-alpha
+        <span className="mx-1.5 text-[color:var(--color-line)]">·</span>
+        2026.04.15
+      </div>
 
       {/* Main grid: copy left, scene graph right — contained, not full-bleed */}
       <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_1.2fr] min-h-[calc(100dvh-4rem)]">
