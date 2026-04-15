@@ -68,11 +68,17 @@ function buildGraph(seed = 7, count = 42) {
 
 function hueToColor(hue: number) {
   // Blend violet → cyan → amber across the 0-1 range.
+  // Multiply by a brightness factor > 1 so meshBasicMaterial (toneMapped=false)
+  // exceeds the bloom luminance threshold and halates — without flattening the
+  // palette into white. Because values get clipped by bloom, the palette
+  // remains visible but the brightest instances now glow.
+  const BRIGHTNESS = 1.85;
   const violet = new THREE.Color("#8b5cf6");
   const cyan = new THREE.Color("#38bdf8");
   const amber = new THREE.Color("#f59e0b");
-  if (hue < 0.5) return violet.lerp(cyan, hue * 2);
-  return cyan.lerp(amber, (hue - 0.5) * 2);
+  const base = hue < 0.5 ? violet.lerp(cyan, hue * 2) : cyan.lerp(amber, (hue - 0.5) * 2);
+  base.multiplyScalar(BRIGHTNESS);
+  return base;
 }
 
 function Nodes({ nodes }: { nodes: Node[] }) {
@@ -242,9 +248,9 @@ export function SceneGraph() {
         <Rig nodes={nodes} edges={edges} mouse={mouse} />
         <EffectComposer>
           <Bloom
-            luminanceThreshold={0.85}
-            luminanceSmoothing={0.5}
-            intensity={0.45}
+            luminanceThreshold={0.6}
+            luminanceSmoothing={0.6}
+            intensity={0.9}
             mipmapBlur
           />
         </EffectComposer>
