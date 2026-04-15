@@ -54,11 +54,11 @@ export function Hero() {
               building in public · early access soon
             </div>
 
-            <h1 className="font-display font-semibold tracking-[-0.02em] leading-[0.98] text-balance">
-              <span className="block text-5xl sm:text-6xl md:text-7xl text-[color:var(--color-ink)]">
+            <h1 className="font-display tracking-[-0.025em] leading-[0.95] text-balance">
+              <span className="block text-5xl sm:text-6xl md:text-7xl font-semibold text-[color:var(--color-ink)]">
                 See the web
               </span>
-              <span className="block text-5xl sm:text-6xl md:text-7xl text-[color:var(--color-ink)]">
+              <span className="block text-5xl sm:text-6xl md:text-7xl font-semibold text-[color:var(--color-ink-dim)]">
                 the way humans do.
               </span>
             </h1>
