@@ -6,3 +6,8 @@ out/
 *.log
 .DS_Store
 next-env.d.ts
+tsconfig.tsbuildinfo
+
+# The repo root .gitignore wildcards *.png; keep reference screenshots tracked.
+!screenshots/
+!screenshots/**
