@@ -8,7 +8,7 @@ import { AffordanceEngine } from '../pipelines/affordance/index.js';
 import { VisualPipeline, type VisualPipelineConfig } from '../pipelines/visual/index.js';
 import { FrameCapture } from '../pipelines/visual/frame-capture.js';
 import { toJSON, toCompact } from '../pipelines/fusion/serializer.js';
-import { affordanceToText } from './serializer.js';
+import { affordanceToText, formatVisualAnalysis } from './serializer.js';
 import { Config } from '../config.js';
 import type { AnalysisDepth } from '../types/index.js';
 
@@ -310,26 +310,8 @@ export function createServer(config: ServerConfig = {}): McpServer {
       if (!result.analysis) {
         return { content: [{ type: 'text' as const, text: 'Visual analysis unavailable. Ensure Ollama is running with a vision model (e.g. llava:7b).' }] };
       }
-      const a = result.analysis;
-      const vh = a.visualHierarchy ?? { primaryFocus: 'unknown', readingFlow: [] };
-      const lines = [
-        `Visual Hierarchy: primary focus = "${vh.primaryFocus}", flow = ${(vh.readingFlow ?? []).join(' → ')}`,
-        '',
-        `Contrast Issues (${(a.contrastIssues ?? []).length}):`,
-        ...(a.contrastIssues ?? []).map(c => `  - ${c.element}: ${c.issue}${c.estimatedRatio ? ` (ratio: ${c.estimatedRatio})` : ''}`),
-        '',
-        `Spacing Issues (${(a.spacingIssues ?? []).length}):`,
-        ...(a.spacingIssues ?? []).map(s => `  - ${s.area}: ${s.issue}`),
-        '',
-        `Affordance Issues (${(a.affordanceIssues ?? []).length}):`,
-        ...(a.affordanceIssues ?? []).map(af => `  - ${af.element}: ${af.issue}`),
-        '',
-        `State Indicators (${(a.stateIndicators ?? []).length}):`,
-        ...(a.stateIndicators ?? []).map(s => `  - [${s.type}] ${s.element}: ${s.description}`),
-        '',
-        `Overall: ${a.overallAssessment ?? 'No assessment available'}`,
-      ];
-      return { content: [{ type: 'text' as const, text: lines.join('\n') }] };
+      const text = formatVisualAnalysis(result.analysis);
+      return { content: [{ type: 'text' as const, text }] };
     },
   );
 
