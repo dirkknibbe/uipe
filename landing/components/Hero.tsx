@@ -54,48 +54,48 @@ export function Hero() {
         2026.04.15
       </div>
 
-      {/* Main grid: copy left, scene graph right — contained, not full-bleed */}
-      <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_1.2fr] min-h-[calc(100dvh-4rem)]">
-        {/* Left column: headline, subhead, CTA */}
-        <div className="relative z-10 flex flex-col px-6 sm:px-10 lg:px-16 pt-[18vh] pb-16">
-          <div className="max-w-[56ch] space-y-10">
-            <div className="inline-flex items-center gap-2 font-mono text-[11px] uppercase tracking-[0.2em] text-[color:var(--color-ink-faint)]">
-              <span className="h-1.5 w-1.5 rounded-full bg-[color:var(--color-accent-amber)]" />
-              building in public · early access soon
-            </div>
-
-            <h1 className="font-display tracking-[-0.025em] leading-[0.95] text-balance">
-              <span className="block text-5xl sm:text-6xl md:text-7xl font-semibold text-[color:var(--color-ink)]">
-                See the web
-              </span>
-              <span className="block text-5xl sm:text-6xl md:text-7xl font-semibold text-[color:var(--color-ink-dim)]">
-                the way humans do.
-              </span>
-            </h1>
-
-            <p className="text-lg text-[color:var(--color-ink-dim)] max-w-[48ch] leading-[1.55]">
-              A perception layer that gives your agent human-level web
-              understanding. DOM, accessibility, vision, and time — fused into a
-              single scene graph. Ships as an MCP server.
-            </p>
-
-            <div className="pt-2">
-              <WaitlistForm section="hero" />
-            </div>
-          </div>
-        </div>
-
-        {/* Right column: scene graph — contained within its column */}
-        <div className="relative hidden lg:block border-l border-[color:var(--color-line)]/30">
-          <div className="absolute inset-0">
-            <SceneGraph />
-          </div>
-        </div>
+      {/* Scene graph — full-bleed behind everything */}
+      <div className="absolute inset-x-0 top-16 bottom-0 z-0 pointer-events-none lg:pointer-events-auto">
+        <SceneGraph />
       </div>
 
-      {/* Mobile: scene graph as subtle backdrop behind hero on small screens only */}
-      <div className="lg:hidden absolute inset-x-0 top-16 bottom-0 -z-0 opacity-40 pointer-events-none">
-        <SceneGraph />
+      {/* Subtle left-only gradient so copy stays legible — 3D bleeds to all other edges */}
+      <div
+        aria-hidden
+        className="absolute inset-x-0 top-16 bottom-0 z-[1] pointer-events-none"
+        style={{
+          background:
+            "linear-gradient(to right, rgba(11,11,15,0.88) 0%, rgba(11,11,15,0.5) 28%, rgba(11,11,15,0) 45%)",
+        }}
+      />
+
+      {/* Copy — floats over the 3D on the left half */}
+      <div className="relative z-10 min-h-[calc(100dvh-4rem)] flex flex-col px-6 sm:px-10 lg:px-16 pt-[18vh] pb-16 lg:max-w-[50%]">
+        <div className="max-w-[56ch] space-y-10">
+          <div className="inline-flex items-center gap-2 font-mono text-[11px] uppercase tracking-[0.2em] text-[color:var(--color-ink-faint)]">
+            <span className="h-1.5 w-1.5 rounded-full bg-[color:var(--color-accent-amber)]" />
+            building in public · early access soon
+          </div>
+
+          <h1 className="font-display tracking-[-0.025em] leading-[0.95] text-balance">
+            <span className="block text-5xl sm:text-6xl md:text-7xl font-semibold text-[color:var(--color-ink)]">
+              See the web
+            </span>
+            <span className="block text-5xl sm:text-6xl md:text-7xl font-semibold text-[color:var(--color-ink-dim)]">
+              the way humans do.
+            </span>
+          </h1>
+
+          <p className="text-lg text-[color:var(--color-ink-dim)] max-w-[48ch] leading-[1.55]">
+            A perception layer that gives your agent human-level web
+            understanding. DOM, accessibility, vision, and time — fused into a
+            single scene graph. Ships as an MCP server.
+          </p>
+
+          <div className="pt-2">
+            <WaitlistForm section="hero" />
+          </div>
+        </div>
       </div>
     </section>
   );

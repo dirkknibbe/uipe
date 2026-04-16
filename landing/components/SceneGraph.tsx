@@ -75,53 +75,94 @@ function hueToColor(hue: number) {
   return cyan.lerp(amber, (hue - 0.5) * 2);
 }
 
-function Nodes({ nodes }: { nodes: Node[] }) {
-  const ref = useRef<THREE.InstancedMesh>(null);
-  const colorRef = useRef<Float32Array>(new Float32Array(nodes.length * 3));
-  const dummy = useMemo(() => new THREE.Object3D(), []);
+// Soft radial gradient texture — no hard edges, just light falloff.
+function useSoftCircle() {
+  return useMemo(() => {
+    const size = 128;
+    const canvas = document.createElement("canvas");
+    canvas.width = size;
+    canvas.height = size;
+    const ctx = canvas.getContext("2d")!;
+    const g = ctx.createRadialGradient(
+      size / 2, size / 2, 0,
+      size / 2, size / 2, size / 2,
+    );
+    g.addColorStop(0, "rgba(255,255,255,1)");
+    g.addColorStop(0.15, "rgba(255,255,255,0.8)");
+    g.addColorStop(0.4, "rgba(255,255,255,0.35)");
+    g.addColorStop(0.7, "rgba(255,255,255,0.08)");
+    g.addColorStop(1, "rgba(255,255,255,0)");
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, size, size);
+    return new THREE.CanvasTexture(canvas);
+  }, []);
+}
 
+function Nodes({ nodes }: { nodes: Node[] }) {
+  const pointsRef = useRef<THREE.Points>(null);
+  const softCircle = useSoftCircle();
+
+  const { positions, sizes } = useMemo(() => {
+    const pos = new Float32Array(nodes.length * 3);
+    const sz = new Float32Array(nodes.length);
+    for (let i = 0; i < nodes.length; i++) {
+      pos[i * 3] = nodes[i].position[0];
+      pos[i * 3 + 1] = nodes[i].position[1];
+      pos[i * 3 + 2] = nodes[i].position[2];
+      sz[i] = nodes[i].scale * 12;
+    }
+    return { positions: pos, sizes: sz };
+  }, [nodes]);
+
+  // Animate: gentle pulse on each node's size.
   useFrame(({ clock }) => {
-    if (!ref.current) return;
+    if (!pointsRef.current) return;
+    const geo = pointsRef.current.geometry;
+    const sizeAttr = geo.getAttribute("size") as THREE.BufferAttribute;
     const t = clock.getElapsedTime();
     for (let i = 0; i < nodes.length; i++) {
-      const n = nodes[i];
-      const pulse = 1 + Math.sin(t * 0.6 + n.phase) * 0.1;
-      dummy.position.set(...n.position);
-      dummy.scale.setScalar(n.scale * pulse);
-      dummy.updateMatrix();
-      ref.current.setMatrixAt(i, dummy.matrix);
-
-      const color = hueToColor(n.hue);
-      colorRef.current[i * 3] = color.r;
-      colorRef.current[i * 3 + 1] = color.g;
-      colorRef.current[i * 3 + 2] = color.b;
+      const pulse = 1 + Math.sin(t * 0.6 + nodes[i].phase) * 0.15;
+      sizeAttr.array[i] = nodes[i].scale * 12 * pulse;
     }
-    ref.current.instanceMatrix.needsUpdate = true;
-    if (ref.current.instanceColor) {
-      ref.current.instanceColor.needsUpdate = true;
-    }
+    sizeAttr.needsUpdate = true;
   });
 
   return (
-    <instancedMesh
-      ref={ref}
-      args={[undefined, undefined, nodes.length]}
-      frustumCulled={false}
-    >
-      <sphereGeometry args={[1, 24, 24]} />
-      <meshStandardMaterial
-        emissive="#ffffff"
-        emissiveIntensity={1.2}
-        roughness={0.3}
-        metalness={0.2}
+    <points ref={pointsRef} frustumCulled={false}>
+      <bufferGeometry>
+        <bufferAttribute
+          attach="attributes-position"
+          args={[positions, 3]}
+        />
+        <bufferAttribute
+          attach="attributes-size"
+          args={[sizes, 1]}
+        />
+      </bufferGeometry>
+      <shaderMaterial
         transparent
-        opacity={0.95}
+        depthWrite={false}
+        blending={THREE.AdditiveBlending}
+        uniforms={{ uMap: { value: softCircle } }}
+        vertexShader={`
+          attribute float size;
+          varying float vSize;
+          void main() {
+            vec4 mvPos = modelViewMatrix * vec4(position, 1.0);
+            gl_Position = projectionMatrix * mvPos;
+            gl_PointSize = size * (300.0 / -mvPos.z);
+            vSize = size;
+          }
+        `}
+        fragmentShader={`
+          uniform sampler2D uMap;
+          void main() {
+            vec4 tex = texture2D(uMap, gl_PointCoord);
+            gl_FragColor = vec4(vec3(1.0), tex.a * 0.9);
+          }
+        `}
       />
-      <instancedBufferAttribute
-        attach="instanceColor"
-        args={[colorRef.current, 3]}
-      />
-    </instancedMesh>
+    </points>
   );
 }
 
@@ -236,7 +277,7 @@ export function SceneGraph() {
       style={{ position: "absolute", inset: 0 }}
     >
       <Canvas
-        camera={{ position: [0, 0, 7], fov: 45 }}
+        camera={{ position: [-2.5, 0, 5.5], fov: 55 }}
         dpr={[1, 2]}
         gl={{ antialias: true, alpha: true }}
       >
@@ -245,9 +286,9 @@ export function SceneGraph() {
         <Rig nodes={nodes} edges={edges} mouse={mouse} />
         <EffectComposer>
           <Bloom
-            luminanceThreshold={0.2}
-            luminanceSmoothing={0.9}
-            intensity={0.9}
+            luminanceThreshold={0.1}
+            luminanceSmoothing={0.95}
+            intensity={1.4}
             mipmapBlur
           />
         </EffectComposer>
