@@ -1,5 +1,5 @@
 import Anthropic from '@anthropic-ai/sdk';
-import type { VisualElement, TextRegion, BoundingBox } from '../../types/index.js';
+import type { VisualElement, TextRegion, BoundingBox, VisualUnderstanding } from '../../types/index.js';
 import { createLogger } from '../../utils/logger.js';
 
 const logger = createLogger('ClaudeVision');
@@ -71,6 +71,74 @@ export class ClaudeVisionProvider {
     });
     const text = response.content[0].type === 'text' ? response.content[0].text : '';
     return this.parseTextRegions(text);
+  }
+
+  async analyze(screenshot: Buffer, detectedElements: VisualElement[]): Promise<VisualUnderstanding> {
+    const elementSummary = detectedElements
+      .map(el => `- [${el.label}] "${el.description ?? el.text ?? ''}" at (${el.boundingBox.x},${el.boundingBox.y})`)
+      .join('\n');
+
+    const prompt = `You are a UI/UX perception engine analyzing a webpage screenshot.
+OmniParser has already detected these interactive elements:
+${elementSummary}
+
+Analyze the screenshot and provide:
+1. VISUAL HIERARCHY: What draws the eye first? What's the reading flow?
+2. CONTRAST & READABILITY: Any text with poor contrast? Estimate WCAG compliance.
+3. SPACING & ALIGNMENT: Are elements properly aligned? Any cramped or awkward spacing?
+4. INTERACTIVE AFFORDANCES: Do interactive elements look clickable/tappable? Any ambiguous elements?
+5. STATE INDICATORS: Loading states, error states, disabled states visible?
+6. OVERALL UX ASSESSMENT: One-paragraph human-perception summary of this page.
+
+Respond in JSON format:
+{
+  "visualHierarchy": { "primaryFocus": "...", "readingFlow": ["...", "..."] },
+  "contrastIssues": [{ "element": "...", "issue": "...", "estimatedRatio": "..." }],
+  "spacingIssues": [{ "area": "...", "issue": "..." }],
+  "affordanceIssues": [{ "element": "...", "issue": "..." }],
+  "stateIndicators": [{ "type": "...", "element": "...", "description": "..." }],
+  "overallAssessment": "..."
+}`;
+
+    logger.info('Running visual analysis via Claude Vision', { elementCount: detectedElements.length });
+
+    const response = await this.client.messages.create({
+      model: this.model,
+      max_tokens: this.maxTokens,
+      messages: [{
+        role: 'user',
+        content: [
+          { type: 'image', source: { type: 'base64', media_type: 'image/png', data: screenshot.toString('base64') } },
+          { type: 'text', text: prompt },
+        ],
+      }],
+    });
+
+    const text = response.content[0].type === 'text' ? response.content[0].text : '';
+    const jsonMatch = text.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) {
+      return {
+        visualHierarchy: { primaryFocus: 'unknown', readingFlow: [] },
+        contrastIssues: [],
+        spacingIssues: [],
+        affordanceIssues: [],
+        stateIndicators: [],
+        overallAssessment: text || 'Analysis incomplete',
+      } as VisualUnderstanding;
+    }
+
+    try {
+      return JSON.parse(jsonMatch[0]) as VisualUnderstanding;
+    } catch {
+      return {
+        visualHierarchy: { primaryFocus: 'unknown', readingFlow: [] },
+        contrastIssues: [],
+        spacingIssues: [],
+        affordanceIssues: [],
+        stateIndicators: [],
+        overallAssessment: text,
+      } as VisualUnderstanding;
+    }
   }
 
   private parseElements(raw: string): VisualElement[] {

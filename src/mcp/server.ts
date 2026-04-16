@@ -297,7 +297,7 @@ export function createServer(config: ServerConfig = {}): McpServer {
     'analyze_visual',
     {
       title: 'Analyze Visual Quality',
-      description: 'Run Ollama/Qwen3-VL visual understanding (Tier B) on the current page. Returns visual hierarchy, contrast issues, spacing, affordance issues, and overall UX assessment. Requires Ollama running with qwen3-vl model.',
+      description: 'Run visual understanding (Tier B) on the current page. Returns visual hierarchy, contrast issues, spacing, affordance issues, and overall UX assessment. Uses Claude Vision (requires ANTHROPIC_API_KEY), falls back to Ollama if available.',
       inputSchema: z.object({}),
     },
     async () => {
@@ -308,7 +308,7 @@ export function createServer(config: ServerConfig = {}): McpServer {
       const screenshot = await runtime.screenshot();
       const result = await visual.analyze(screenshot, 'understand');
       if (!result.analysis) {
-        return { content: [{ type: 'text' as const, text: 'Visual analysis unavailable. Ensure Ollama is running with a vision model (e.g. llava:7b).' }] };
+        return { content: [{ type: 'text' as const, text: 'Visual analysis unavailable. Ensure ANTHROPIC_API_KEY is set, or Ollama is running with a vision model (e.g. llava:7b).' }] };
       }
       const text = formatVisualAnalysis(result.analysis);
       return { content: [{ type: 'text' as const, text }] };

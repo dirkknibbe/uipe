@@ -40,19 +40,22 @@ export class VisualPipeline {
       return { elements, analysis: null, deepAnalysis: null };
     }
 
-    // Tier B: Understanding (Ollama/Qwen3-VL)
+    // Tier B: Understanding (Claude Vision, Ollama fallback)
     let analysis = null;
     if (depth === 'understand' || depth === 'deep') {
       try {
-        const ollamaAvailable = await this.ollamaVision.healthCheck();
-        if (ollamaAvailable) {
-          logger.info('Running Ollama visual understanding');
-          analysis = await this.ollamaVision.analyze(screenshot, elements);
-        } else {
-          logger.info('Ollama unavailable, skipping understanding tier');
-        }
+        logger.info('Running Claude Vision visual understanding');
+        analysis = await this.claudeVision.analyze(screenshot, elements);
       } catch (err) {
-        logger.warn('Ollama analysis failed, skipping', { error: String(err) });
+        logger.warn('Claude Vision understanding failed, trying Ollama fallback', { error: String(err) });
+        try {
+          const ollamaAvailable = await this.ollamaVision.healthCheck();
+          if (ollamaAvailable) {
+            analysis = await this.ollamaVision.analyze(screenshot, elements);
+          }
+        } catch (fallbackErr) {
+          logger.warn('Ollama fallback also failed', { error: String(fallbackErr) });
+        }
       }
     }
 
