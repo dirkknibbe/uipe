@@ -109,10 +109,13 @@ function Nodes({ nodes }: { nodes: Node[] }) {
       frustumCulled={false}
     >
       <sphereGeometry args={[1, 24, 24]} />
-      <meshBasicMaterial
+      <meshStandardMaterial
+        emissive="#ffffff"
+        emissiveIntensity={1.2}
+        roughness={0.3}
+        metalness={0.2}
         transparent
-        opacity={0.92}
-        toneMapped={false}
+        opacity={0.95}
       />
       <instancedBufferAttribute
         attach="instanceColor"
@@ -242,9 +245,9 @@ export function SceneGraph() {
         <Rig nodes={nodes} edges={edges} mouse={mouse} />
         <EffectComposer>
           <Bloom
-            luminanceThreshold={0.85}
-            luminanceSmoothing={0.5}
-            intensity={0.45}
+            luminanceThreshold={0.2}
+            luminanceSmoothing={0.9}
+            intensity={0.9}
             mipmapBlur
           />
         </EffectComposer>
