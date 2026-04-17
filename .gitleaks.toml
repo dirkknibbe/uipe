@@ -1,0 +1,25 @@
+# Baseline .gitleaks.toml for personal projects.
+# Copy this to <project>/.gitleaks.toml and extend per-project.
+#
+# Gitleaks uses a layered config: this file adopts the default ruleset
+# and adds allowlist entries for things commonly mistaken as secrets
+# in our stack (MCP env var references, test fixtures, etc.).
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Baseline false-positive suppressions"
+paths = [
+    '''(^|/)node_modules/''',
+    '''(^|/)\.venv/''',
+    '''(^|/)dist/''',
+    '''(^|/)\.next/''',
+    '''(^|/)coverage/''',
+]
+regexes = [
+    # MCP env var interpolation: "${FOO_KEY}" is a reference, not a secret.
+    '''\$\{[A-Z0-9_]+\}''',
+    # Common placeholder patterns used in docs and tests.
+    '''(sk-ant-api03-)?(EXAMPLE|FAKE|PLACEHOLDER|your[-_]?key[-_]?here|xxx+)''',
+]
