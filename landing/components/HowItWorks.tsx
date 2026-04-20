@@ -9,8 +9,9 @@ type Stream = {
   caption: string;
   // Start point on the 1000x560 SVG viewBox; streams end at center (500, 280).
   start: { x: number; y: number };
-  // Control offset for the quadratic bezier, relative to start.
-  control: { x: number; y: number };
+  // Phase (radians) for the sine wiggle that makes strands cross — offsets
+  // between strands are what produces the weave.
+  phase: number;
   // Delay (ms) for staggered entrance.
   delay: number;
 };
@@ -22,7 +23,7 @@ const STREAMS: Stream[] = [
     color: "var(--color-accent-violet)",
     caption: "html > body > main > header > h1 · 847 nodes",
     start: { x: 80, y: 80 },
-    control: { x: 260, y: 200 },
+    phase: 0,
     delay: 0,
   },
   {
@@ -31,7 +32,7 @@ const STREAMS: Stream[] = [
     color: "var(--color-accent-blue)",
     caption: 'role=heading level=1 · "See the web…"',
     start: { x: 920, y: 80 },
-    control: { x: 740, y: 200 },
+    phase: Math.PI,
     delay: 400,
   },
   {
@@ -40,7 +41,7 @@ const STREAMS: Stream[] = [
     color: "var(--color-accent-amber)",
     caption: "primary_cta@(x:234, y:512) conf=0.94",
     start: { x: 80, y: 480 },
-    control: { x: 260, y: 360 },
+    phase: Math.PI * 0.5,
     delay: 800,
   },
   {
@@ -49,16 +50,41 @@ const STREAMS: Stream[] = [
     color: "color-mix(in oklch, var(--color-ink-dim) 65%, transparent)",
     caption: "frame_delta_847ms · state_changed",
     start: { x: 920, y: 480 },
-    control: { x: 740, y: 360 },
+    phase: Math.PI * 1.5,
     delay: 1200,
   },
 ];
 
 const CENTER = { x: 500, y: 280 };
 
-// Build a quadratic bezier path that arcs from start to the center.
+// Build a wiggly path from start to center. The strand follows the straight
+// line start → center but oscillates perpendicular to it with a sine wave,
+// enveloped so the wiggle fades to zero at both endpoints. Different phases
+// across strands make them cross each other en route, forming a braid.
 function pathFor(s: Stream) {
-  return `M ${s.start.x} ${s.start.y} Q ${s.control.x} ${s.control.y} ${CENTER.x} ${CENTER.y}`;
+  const steps = 80;
+  const dx = CENTER.x - s.start.x;
+  const dy = CENTER.y - s.start.y;
+  const len = Math.hypot(dx, dy);
+  // Perpendicular unit vector for the wiggle offset.
+  const pxDir = -dy / len;
+  const pyDir = dx / len;
+  const amp = 70;            // wiggle amplitude
+  const crossings = 2.6;     // number of sine half-cycles along the strand
+  const pts: string[] = [];
+  for (let i = 0; i <= steps; i++) {
+    const t = i / steps;
+    // Straight-line baseline.
+    const bx = s.start.x + dx * t;
+    const by = s.start.y + dy * t;
+    // Envelope — sin(πt) — zero at both endpoints, peak mid-strand.
+    const envelope = Math.sin(t * Math.PI);
+    const w = Math.sin(t * Math.PI * crossings + s.phase) * amp * envelope;
+    const x = bx + pxDir * w;
+    const y = by + pyDir * w;
+    pts.push(`${i === 0 ? "M" : "L"} ${x.toFixed(1)} ${y.toFixed(1)}`);
+  }
+  return pts.join(" ");
 }
 
 export function HowItWorks() {
