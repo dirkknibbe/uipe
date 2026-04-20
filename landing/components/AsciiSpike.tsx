@@ -39,6 +39,11 @@ const COLOR: Record<Signal, string> = {
   time: "#ff6b35",
 };
 
+// Character ramps.
+const NODE_RAMP = " .:+*#@"; // sparse edge → dense core
+const JUNK = "0123456789abcdefABCDEF!?/.:;-=+*^~<>[](){}";
+const AMBIENT = "·.:";
+
 type Packet = {
   edgeIdx: number;
   progress: number;
@@ -66,9 +71,17 @@ function project(p: Pt, w: number, h: number): [number, number, number] {
   return [px, py, d];
 }
 
+// Deterministic hashed pick from a pool — seeded per (index, time-bucket).
+function hashedChar(pool: string, a: number, b: number): string {
+  let s = ((a * 2654435761) ^ (b * 40503)) >>> 0;
+  s = (s ^ (s >>> 13)) * 0x5bd1e995;
+  s = s >>> 0;
+  return pool[s % pool.length];
+}
+
 export function AsciiSpike() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const mouse = useRef({ x: 0, y: 0, active: false });
+  const mouse = useRef({ x: -9999, y: -9999, active: false });
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -89,6 +102,7 @@ export function AsciiSpike() {
       canvas.style.height = rect.height + "px";
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       ctx.font = `${fontSize}px "JetBrains Mono", monospace`;
+      ctx.textBaseline = "alphabetic";
     };
     resize();
     const ro = new ResizeObserver(resize);
@@ -100,7 +114,11 @@ export function AsciiSpike() {
       mouse.current.y = e.clientY - rect.top;
       mouse.current.active = true;
     };
-    const onLeave = () => { mouse.current.active = false; };
+    const onLeave = () => {
+      mouse.current.active = false;
+      mouse.current.x = -9999;
+      mouse.current.y = -9999;
+    };
     canvas.addEventListener("pointermove", onMove);
     canvas.addEventListener("pointerleave", onLeave);
 
@@ -109,8 +127,9 @@ export function AsciiSpike() {
       last = now;
       const t = now / 1000;
 
+      // Packet lifecycle.
       spawnClock -= dt;
-      if (spawnClock <= 0 && packets.length < 6) {
+      if (spawnClock <= 0 && packets.length < 7) {
         const edgeIdx = Math.floor(Math.random() * EDGES.length);
         const signal: Signal =
           Math.random() < 0.45
@@ -123,10 +142,10 @@ export function AsciiSpike() {
           content: pool[Math.floor(Math.random() * pool.length)],
           signal,
         });
-        spawnClock = 0.4 + Math.random() * 0.8;
+        spawnClock = 0.5 + Math.random() * 0.8;
       }
       for (let i = packets.length - 1; i >= 0; i--) {
-        packets[i].progress += dt / 2.5;
+        packets[i].progress += dt / 2.8;
         if (packets[i].progress >= 1) packets.splice(i, 1);
       }
 
@@ -141,57 +160,97 @@ export function AsciiSpike() {
         project(rotate(n.pos, rx, ry), W, H),
       );
 
+      // Hover: nearest node to cursor within 90px → boost.
+      let hoverIdx = -1;
+      let hoverBoost = 0;
+      if (mouse.current.active) {
+        let best = Infinity;
+        for (let i = 0; i < projected.length; i++) {
+          const d = Math.hypot(projected[i][0] - mouse.current.x, projected[i][1] - mouse.current.y);
+          if (d < best) { best = d; hoverIdx = i; }
+        }
+        hoverBoost = Math.max(0, 1 - best / 90);
+      }
+
       ctx.clearRect(0, 0, W, H);
 
-      ctx.fillStyle = "rgba(168,162,158,0.10)";
-      const noise = "·:.,";
+      // 1) Ambient field — very sparse.
+      ctx.fillStyle = "rgba(168,162,158,0.08)";
       for (let r = 0; r < rows; r++) {
         for (let c = 0; c < cols; c++) {
-          if (((r * 31 + c * 7) & 5) === 0) {
-            ctx.fillText(noise[(r + c) % noise.length], c * cellW, (r + 1) * cellH);
+          if (((r * 31 + c * 7) & 15) === 0) {
+            ctx.fillText(AMBIENT[(r + c) % AMBIENT.length], c * cellW, (r + 1) * cellH);
           }
         }
       }
 
-      ctx.fillStyle = "rgba(168,162,158,0.35)";
-      for (const [a, b] of EDGES) {
+      // 2) Edge streams — flowing junk + UIPE packets on top.
+      for (let ei = 0; ei < EDGES.length; ei++) {
+        const [a, b] = EDGES[ei];
         const [x1, y1] = projected[a];
         const [x2, y2] = projected[b];
-        const steps = Math.max(1, Math.floor(Math.hypot(x2 - x1, y2 - y1) / cellW));
+        const len = Math.hypot(x2 - x1, y2 - y1);
+        const step = cellW * 1.05;
+        const steps = Math.max(1, Math.floor(len / step));
+        const scroll = t * (6 + (ei % 3) * 2);
+        const edgeHot = (hoverIdx === a || hoverIdx === b) ? 0.58 : 0.26;
+
         for (let i = 0; i <= steps; i++) {
-          const t2 = i / steps;
-          ctx.fillText("·", x1 + (x2 - x1) * t2, y1 + (y2 - y1) * t2);
+          const frac = i / steps;
+          const x = x1 + (x2 - x1) * frac;
+          const y = y1 + (y2 - y1) * frac;
+          // Leave room around node cores so spheres read cleanly.
+          const distA = Math.hypot(x - x1, y - y1);
+          const distB = Math.hypot(x - x2, y - y2);
+          if (distA < 18 || distB < 18) continue;
+
+          const ch = hashedChar(JUNK, ei * 101 + i, Math.floor(scroll));
+          // Subtle cursor brightness modulation (no extra glyphs).
+          let alpha = edgeHot;
+          if (mouse.current.active) {
+            const d = Math.hypot(x - mouse.current.x, y - mouse.current.y);
+            if (d < 160) alpha = Math.min(0.9, edgeHot + (1 - d / 160) * 0.35);
+          }
+          ctx.fillStyle = `rgba(168,162,158,${alpha})`;
+          ctx.fillText(ch, x, y);
+        }
+
+        // Overlay UIPE packets at their interpolated positions.
+        for (const p of packets) {
+          if (p.edgeIdx !== ei) continue;
+          const frac = p.progress;
+          const x = x1 + (x2 - x1) * frac;
+          const y = y1 + (y2 - y1) * frac;
+          const distA = Math.hypot(x - x1, y - y1);
+          const distB = Math.hypot(x - x2, y - y2);
+          if (distA < 16 || distB < 16) continue;
+          ctx.fillStyle = COLOR[p.signal];
+          ctx.fillText(p.content, x, y);
         }
       }
 
+      // 3) Nodes as ASCII voxel spheres.
       for (let i = 0; i < NODES.length; i++) {
-        const [x, y] = projected[i];
+        const [x, y, depth] = projected[i];
+        const baseR = 18;
+        const depthR = baseR / Math.max(1.2, depth - 1.5);
+        const boostR = i === hoverIdx ? depthR * (1 + hoverBoost * 0.45) : depthR;
+        const rcols = Math.ceil(boostR / cellW) + 1;
+        const rrows = Math.ceil(boostR / cellH) + 1;
         ctx.fillStyle = COLOR[NODES[i].signal];
-        ctx.fillText("@", x - cellW / 2, y + cellH / 2);
-      }
-
-      for (const p of packets) {
-        const [a, b] = EDGES[p.edgeIdx];
-        const [x1, y1] = projected[a];
-        const [x2, y2] = projected[b];
-        ctx.fillStyle = COLOR[p.signal];
-        ctx.fillText(p.content, x1 + (x2 - x1) * p.progress, y1 + (y2 - y1) * p.progress);
-      }
-
-      if (mouse.current.active) {
-        const { x: mx, y: my } = mouse.current;
-        ctx.fillStyle = "rgba(255,255,255,0.22)";
-        for (let r = 0; r < rows; r++) {
-          for (let c = 0; c < cols; c++) {
-            const cx = c * cellW;
-            const cy = (r + 1) * cellH;
-            const dist = Math.hypot(cx - mx, cy - my);
-            if (dist < 120) {
-              const d = Math.sin(dist * 0.1 - t * 4) * Math.exp(-dist / 120);
-              if (Math.abs(d) > 0.3) {
-                ctx.fillText("~", cx + Math.round(d * 2) * cellW, cy);
-              }
-            }
+        for (let dr = -rrows; dr <= rrows; dr++) {
+          for (let dc = -rcols; dc <= rcols; dc++) {
+            const px = dc * cellW;
+            const py = dr * cellH;
+            const dist = Math.hypot(px, py);
+            if (dist >= boostR) continue;
+            const tt = 1 - dist / boostR;
+            const bump = i === hoverIdx ? hoverBoost * 0.35 : 0;
+            const idx = Math.min(
+              NODE_RAMP.length - 1,
+              Math.max(1, Math.floor(tt * NODE_RAMP.length + bump * NODE_RAMP.length)),
+            );
+            ctx.fillText(NODE_RAMP[idx], x + px - cellW / 2, y + py + cellH / 2);
           }
         }
       }
