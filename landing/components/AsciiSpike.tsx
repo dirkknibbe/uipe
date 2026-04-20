@@ -116,11 +116,10 @@ function project(p: Pt, w: number, h: number): [number, number, number] {
   const [x, y, z] = p;
   const fov = 3.5;
   const d = fov + z;
-  // Scale is keyed primarily to width (w/3.2) but capped by height so the
-  // graph can't grow so tall that top-hemisphere spheres overflow the
-  // canvas and get clipped. With GRAPH_RADIUS=1.7 the graph's vertical
-  // extent stays within ±0.94 * scale, which always fits inside h * 0.9.
-  const scale = Math.min(w / 3.2, h / 2.2);
+  // Graph fills the short dimension; overflows the long one so ASCII
+  // bleeds off left/right edges. Top clipping is tolerated in exchange
+  // for the bigger, better-spaced composition.
+  const scale = Math.min(w, h) / 1.1;
   const px = (x / d) * scale + w / 2;
   const py = (y / d) * scale + h / 2;
   return [px, py, d];
