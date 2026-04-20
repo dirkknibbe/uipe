@@ -9,7 +9,7 @@ const SIGNAL_CYCLE: Signal[] = ["DOM", "a11y", "vision", "time"];
 // Place 12 nodes on a fibonacci sphere — the whole graph reads as a single
 // 3D polyhedron. Each node is also a voxel sphere, so the hero is
 // "spheres-on-a-sphere."
-const GRAPH_RADIUS = 2.3;
+const GRAPH_RADIUS = 1.7;
 function buildFibNodes(count: number): Array<{ pos: Pt; signal: Signal }> {
   const out: Array<{ pos: Pt; signal: Signal }> = [];
   for (let i = 0; i < count; i++) {
