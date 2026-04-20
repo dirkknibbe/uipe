@@ -10,7 +10,7 @@ const SceneGraph = dynamic(
 
 export function Hero() {
   return (
-    <section className="relative min-h-[100dvh] overflow-hidden border-b border-[color:var(--color-line)]/40">
+    <section className="relative min-h-[100dvh] border-b border-[color:var(--color-line)]/40">
       {/* Top bar — thin hairline rule, spans full width */}
       <header className="relative z-20 border-b border-[color:var(--color-line)]/40">
         <div className="flex items-center justify-between px-6 sm:px-10 h-16">
@@ -54,8 +54,18 @@ export function Hero() {
         2026.04.15
       </div>
 
-      {/* Scene graph — full-bleed behind everything */}
-      <div className="absolute inset-x-0 top-16 bottom-0 z-0 pointer-events-none lg:pointer-events-auto">
+      {/* Scene graph — extends beyond the hero boundaries and fades at the
+          edges via mask-image, so spheres flow past the nav/rule instead of
+          being sharply clipped. */}
+      <div
+        className="absolute inset-x-0 -top-8 -bottom-24 z-0 pointer-events-none lg:pointer-events-auto"
+        style={{
+          WebkitMaskImage:
+            "linear-gradient(to bottom, transparent 0%, black 7%, black 88%, transparent 100%)",
+          maskImage:
+            "linear-gradient(to bottom, transparent 0%, black 7%, black 88%, transparent 100%)",
+        }}
+      >
         <SceneGraph />
       </div>
 
