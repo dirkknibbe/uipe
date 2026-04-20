@@ -118,7 +118,7 @@ function project(p: Pt, w: number, h: number): [number, number, number] {
   const d = fov + z;
   // Larger scale factor → graph fills more of the hero; copy still readable
   // on the left half because the hero copy is lg:max-w-[50%].
-  const scale = Math.min(w, h) / 1.7;
+  const scale = Math.min(w, h) / 1.35;
   const px = (x / d) * scale + w / 2;
   const py = (y / d) * scale + h / 2;
   return [px, py, d];
@@ -135,9 +135,9 @@ export function AsciiSpike() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const mouse = useRef({ x: -9999, y: -9999, active: false });
 
-  // 380 samples per sphere — dense enough for libretto-like voxel shading
+  // 460 samples per sphere — dense enough for libretto-like voxel shading
   // at the larger on-screen radius.
-  const spherePoints = useMemo(() => fibSphere(380), []);
+  const spherePoints = useMemo(() => fibSphere(460), []);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -222,19 +222,26 @@ export function AsciiSpike() {
         project(rotate(n.pos, rx, ry), W, H),
       );
 
-      // Hover: nearest node within 100px.
+      // Hover: per-node hit test scaled to each sphere's visible radius.
+      // Back-hemisphere nodes (large d) are skipped so the front sphere can
+      // always "take" the hover when the cursor is over it.
       let hoverIdx = -1;
       let hoverBoost = 0;
       if (mouse.current.active) {
-        let best = Infinity;
         for (let i = 0; i < projected.length; i++) {
-          const d = Math.hypot(
-            projected[i][0] - mouse.current.x,
-            projected[i][1] - mouse.current.y,
-          );
-          if (d < best) { best = d; hoverIdx = i; }
+          const [nx, ny, depth] = projected[i];
+          if (depth > 4.8) continue; // back side of the graph shell
+          const nodeR = 90 / Math.max(1.2, depth - 1.5);
+          const hitR = nodeR * 1.45;
+          const d = Math.hypot(nx - mouse.current.x, ny - mouse.current.y);
+          if (d < hitR) {
+            const localBoost = 1 - d / hitR;
+            if (localBoost > hoverBoost) {
+              hoverBoost = localBoost;
+              hoverIdx = i;
+            }
+          }
         }
-        hoverBoost = Math.max(0, 1 - best / 100);
       }
 
       ctx.clearRect(0, 0, W, H);
@@ -260,7 +267,7 @@ export function AsciiSpike() {
         const scroll = t * (6 + (ei % 3) * 2);
         const edgeHot = (hoverIdx === a || hoverIdx === b) ? 0.58 : 0.26;
         // Reserve room around node spheres so they read cleanly.
-        const nodeMargin = 62;
+        const nodeMargin = 80;
 
         for (let i = 0; i <= steps; i++) {
           const frac = i / steps;
@@ -287,7 +294,7 @@ export function AsciiSpike() {
           const y = y1 + (y2 - y1) * frac;
           const distA = Math.hypot(x - x1, y - y1);
           const distB = Math.hypot(x - x2, y - y2);
-          if (distA < 56 || distB < 56) continue;
+          if (distA < 72 || distB < 72) continue;
           ctx.fillStyle = COLOR[p.signal];
           ctx.fillText(p.content, x, y);
         }
@@ -296,9 +303,9 @@ export function AsciiSpike() {
       // 3) Nodes as light-shaded voxel spheres (libretto-style 3D).
       for (let i = 0; i < NODES.length; i++) {
         const [cx, cy, depth] = projected[i];
-        const baseR = 70;
+        const baseR = 90;
         const depthR = baseR / Math.max(1.2, depth - 1.5);
-        const boostR = i === hoverIdx ? depthR * (1 + hoverBoost * 0.4) : depthR;
+        const boostR = i === hoverIdx ? depthR * (1 + hoverBoost * 0.55) : depthR;
 
         cellIntensity.clear();
         cellGlyph.clear();
@@ -316,7 +323,7 @@ export function AsciiSpike() {
           // Rim / ambient lift so silhouette never goes to pure black.
           const ambient = 0.18;
           let intensity = ambient + ndotl * 0.82;
-          if (i === hoverIdx) intensity = Math.min(1, intensity + hoverBoost * 0.25);
+          if (i === hoverIdx) intensity = Math.min(1, intensity + hoverBoost * 0.38);
           if (intensity < 0.1) continue;
           const rampIdx = Math.min(
             SHADE_RAMP.length - 1,
