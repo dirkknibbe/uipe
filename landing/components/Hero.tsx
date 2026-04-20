@@ -4,7 +4,7 @@ import dynamic from "next/dynamic";
 import { WaitlistForm } from "./WaitlistForm";
 
 const SceneGraph = dynamic(
-  () => import("./SceneGraph").then((m) => m.SceneGraph),
+  () => import("./AsciiSpike").then((m) => m.AsciiSpike),
   { ssr: false },
 );
 
