@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useRef } from "react";
+import { useEffect, useMemo, useRef } from "react";
 
 type Signal = "DOM" | "a11y" | "vision" | "time";
 type Pt = [number, number, number];
@@ -39,10 +39,34 @@ const COLOR: Record<Signal, string> = {
   time: "#ff6b35",
 };
 
-// Character ramps.
-const NODE_RAMP = " .:+*#@"; // sparse edge → dense core
+// Libretto-style density ramp: dim → bright for light-shaded voxel spheres.
+const SHADE_RAMP = " .,:;+*=#%@";
+// Stream chars that flow along edges.
 const JUNK = "0123456789abcdefABCDEF!?/.:;-=+*^~<>[](){}";
 const AMBIENT = "·.:";
+
+// Top-left-front light direction (normalized).
+const LIGHT: Pt = (() => {
+  const v: Pt = [-0.45, -0.6, 0.7];
+  const m = Math.hypot(v[0], v[1], v[2]);
+  return [v[0] / m, v[1] / m, v[2] / m];
+})();
+
+// Fibonacci-sphere surface samples for voxel-shading each node.
+function fibSphere(n: number): Pt[] {
+  const pts: Pt[] = [];
+  for (let i = 0; i < n; i++) {
+    const t = (i + 0.5) / n;
+    const theta = Math.acos(1 - 2 * t);
+    const phi = Math.PI * (1 + Math.sqrt(5)) * i;
+    pts.push([
+      Math.sin(theta) * Math.cos(phi),
+      Math.sin(theta) * Math.sin(phi),
+      Math.cos(theta),
+    ]);
+  }
+  return pts;
+}
 
 type Packet = {
   edgeIdx: number;
@@ -71,7 +95,6 @@ function project(p: Pt, w: number, h: number): [number, number, number] {
   return [px, py, d];
 }
 
-// Deterministic hashed pick from a pool — seeded per (index, time-bucket).
 function hashedChar(pool: string, a: number, b: number): string {
   let s = ((a * 2654435761) ^ (b * 40503)) >>> 0;
   s = (s ^ (s >>> 13)) * 0x5bd1e995;
@@ -82,6 +105,9 @@ function hashedChar(pool: string, a: number, b: number): string {
 export function AsciiSpike() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const mouse = useRef({ x: -9999, y: -9999, active: false });
+
+  // 180 samples per sphere — dense enough for libretto-like voxel shading.
+  const spherePoints = useMemo(() => fibSphere(180), []);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -122,6 +148,12 @@ export function AsciiSpike() {
     canvas.addEventListener("pointermove", onMove);
     canvas.addEventListener("pointerleave", onLeave);
 
+    // Reusable per-frame buffers for voxel-sphere rendering.
+    // Keyed by "row,col" → intensity; we pick brightest per cell to avoid
+    // darker samples painting over bright ones.
+    const cellIntensity = new Map<string, number>();
+    const cellGlyph = new Map<string, string>();
+
     const draw = (now: number) => {
       const dt = Math.min(0.05, (now - last) / 1000);
       last = now;
@@ -154,27 +186,30 @@ export function AsciiSpike() {
       const cols = Math.floor(W / cellW);
       const rows = Math.floor(H / cellH);
 
-      const rx = Math.sin(t * 0.05) * 0.18;
+      const rx = Math.sin(t * 0.05) * 0.2;
       const ry = t * 0.09;
       const projected: Array<[number, number, number]> = NODES.map((n) =>
         project(rotate(n.pos, rx, ry), W, H),
       );
 
-      // Hover: nearest node to cursor within 90px → boost.
+      // Hover: nearest node within 100px.
       let hoverIdx = -1;
       let hoverBoost = 0;
       if (mouse.current.active) {
         let best = Infinity;
         for (let i = 0; i < projected.length; i++) {
-          const d = Math.hypot(projected[i][0] - mouse.current.x, projected[i][1] - mouse.current.y);
+          const d = Math.hypot(
+            projected[i][0] - mouse.current.x,
+            projected[i][1] - mouse.current.y,
+          );
           if (d < best) { best = d; hoverIdx = i; }
         }
-        hoverBoost = Math.max(0, 1 - best / 90);
+        hoverBoost = Math.max(0, 1 - best / 100);
       }
 
       ctx.clearRect(0, 0, W, H);
 
-      // 1) Ambient field — very sparse.
+      // 1) Sparse ambient field.
       ctx.fillStyle = "rgba(168,162,158,0.08)";
       for (let r = 0; r < rows; r++) {
         for (let c = 0; c < cols; c++) {
@@ -184,7 +219,7 @@ export function AsciiSpike() {
         }
       }
 
-      // 2) Edge streams — flowing junk + UIPE packets on top.
+      // 2) Edge streams — junk + UIPE packets.
       for (let ei = 0; ei < EDGES.length; ei++) {
         const [a, b] = EDGES[ei];
         const [x1, y1] = projected[a];
@@ -194,18 +229,18 @@ export function AsciiSpike() {
         const steps = Math.max(1, Math.floor(len / step));
         const scroll = t * (6 + (ei % 3) * 2);
         const edgeHot = (hoverIdx === a || hoverIdx === b) ? 0.58 : 0.26;
+        // Reserve room around node spheres so they read cleanly.
+        const nodeMargin = 26;
 
         for (let i = 0; i <= steps; i++) {
           const frac = i / steps;
           const x = x1 + (x2 - x1) * frac;
           const y = y1 + (y2 - y1) * frac;
-          // Leave room around node cores so spheres read cleanly.
           const distA = Math.hypot(x - x1, y - y1);
           const distB = Math.hypot(x - x2, y - y2);
-          if (distA < 18 || distB < 18) continue;
+          if (distA < nodeMargin || distB < nodeMargin) continue;
 
           const ch = hashedChar(JUNK, ei * 101 + i, Math.floor(scroll));
-          // Subtle cursor brightness modulation (no extra glyphs).
           let alpha = edgeHot;
           if (mouse.current.active) {
             const d = Math.hypot(x - mouse.current.x, y - mouse.current.y);
@@ -215,7 +250,6 @@ export function AsciiSpike() {
           ctx.fillText(ch, x, y);
         }
 
-        // Overlay UIPE packets at their interpolated positions.
         for (const p of packets) {
           if (p.edgeIdx !== ei) continue;
           const frac = p.progress;
@@ -223,35 +257,55 @@ export function AsciiSpike() {
           const y = y1 + (y2 - y1) * frac;
           const distA = Math.hypot(x - x1, y - y1);
           const distB = Math.hypot(x - x2, y - y2);
-          if (distA < 16 || distB < 16) continue;
+          if (distA < 22 || distB < 22) continue;
           ctx.fillStyle = COLOR[p.signal];
           ctx.fillText(p.content, x, y);
         }
       }
 
-      // 3) Nodes as ASCII voxel spheres.
+      // 3) Nodes as light-shaded voxel spheres (libretto-style 3D).
       for (let i = 0; i < NODES.length; i++) {
-        const [x, y, depth] = projected[i];
-        const baseR = 18;
+        const [cx, cy, depth] = projected[i];
+        const baseR = 28;
         const depthR = baseR / Math.max(1.2, depth - 1.5);
-        const boostR = i === hoverIdx ? depthR * (1 + hoverBoost * 0.45) : depthR;
-        const rcols = Math.ceil(boostR / cellW) + 1;
-        const rrows = Math.ceil(boostR / cellH) + 1;
-        ctx.fillStyle = COLOR[NODES[i].signal];
-        for (let dr = -rrows; dr <= rrows; dr++) {
-          for (let dc = -rcols; dc <= rcols; dc++) {
-            const px = dc * cellW;
-            const py = dr * cellH;
-            const dist = Math.hypot(px, py);
-            if (dist >= boostR) continue;
-            const tt = 1 - dist / boostR;
-            const bump = i === hoverIdx ? hoverBoost * 0.35 : 0;
-            const idx = Math.min(
-              NODE_RAMP.length - 1,
-              Math.max(1, Math.floor(tt * NODE_RAMP.length + bump * NODE_RAMP.length)),
-            );
-            ctx.fillText(NODE_RAMP[idx], x + px - cellW / 2, y + py + cellH / 2);
+        const boostR = i === hoverIdx ? depthR * (1 + hoverBoost * 0.4) : depthR;
+
+        cellIntensity.clear();
+        cellGlyph.clear();
+
+        // Sample the sphere surface — rotate points with the scene rotation.
+        for (const sp of spherePoints) {
+          const rp = rotate(sp, rx, ry);
+          // Back-face cull: only draw points facing the camera.
+          if (rp[2] < -0.05) continue;
+          const sx = cx + rp[0] * boostR;
+          const sy = cy + rp[1] * boostR;
+          // Lambert shading: N · L.
+          let ndotl = rp[0] * LIGHT[0] + rp[1] * LIGHT[1] + rp[2] * LIGHT[2];
+          ndotl = Math.max(0, ndotl);
+          // Rim / ambient lift so silhouette never goes to pure black.
+          const ambient = 0.18;
+          let intensity = ambient + ndotl * 0.82;
+          if (i === hoverIdx) intensity = Math.min(1, intensity + hoverBoost * 0.25);
+          if (intensity < 0.1) continue;
+          const rampIdx = Math.min(
+            SHADE_RAMP.length - 1,
+            Math.floor(intensity * SHADE_RAMP.length),
+          );
+          const ch = SHADE_RAMP[rampIdx];
+          // Quantize to char cell; keep the brightest sample per cell.
+          const cellKey = `${Math.round(sy / cellH)},${Math.round(sx / cellW)}`;
+          const prev = cellIntensity.get(cellKey) ?? 0;
+          if (intensity > prev) {
+            cellIntensity.set(cellKey, intensity);
+            cellGlyph.set(cellKey, ch);
           }
+        }
+
+        ctx.fillStyle = COLOR[NODES[i].signal];
+        for (const [key, ch] of cellGlyph) {
+          const [r, c] = key.split(",").map(Number);
+          ctx.fillText(ch, c * cellW, (r + 1) * cellH);
         }
       }
 
@@ -265,7 +319,7 @@ export function AsciiSpike() {
       canvas.removeEventListener("pointermove", onMove);
       canvas.removeEventListener("pointerleave", onLeave);
     };
-  }, []);
+  }, [spherePoints]);
 
   return (
     <div style={{ position: "absolute", inset: 0 }}>
