@@ -9,7 +9,7 @@ const SIGNAL_CYCLE: Signal[] = ["DOM", "a11y", "vision", "time"];
 // Place 12 nodes on a fibonacci sphere — the whole graph reads as a single
 // 3D polyhedron. Each node is also a voxel sphere, so the hero is
 // "spheres-on-a-sphere."
-const GRAPH_RADIUS = 2.2;
+const GRAPH_RADIUS = 2.3;
 function buildFibNodes(count: number): Array<{ pos: Pt; signal: Signal }> {
   const out: Array<{ pos: Pt; signal: Signal }> = [];
   for (let i = 0; i < count; i++) {
@@ -118,7 +118,10 @@ function project(p: Pt, w: number, h: number): [number, number, number] {
   const d = fov + z;
   // Larger scale factor → graph fills more of the hero; copy still readable
   // on the left half because the hero copy is lg:max-w-[50%].
-  const scale = Math.min(w, h) / 1.35;
+  // Use min(w,h) / 1.1 — graph fills ~viewport on short dimension and
+  // deliberately overflows the wide dimension so ASCII bleeds off the
+  // left/right edges (feels unbounded rather than boxed).
+  const scale = Math.min(w, h) / 1.1;
   const px = (x / d) * scale + w / 2;
   const py = (y / d) * scale + h / 2;
   return [px, py, d];
@@ -222,23 +225,27 @@ export function AsciiSpike() {
         project(rotate(n.pos, rx, ry), W, H),
       );
 
-      // Hover: per-node hit test scaled to each sphere's visible radius.
-      // Back-hemisphere nodes (large d) are skipped so the front sphere can
-      // always "take" the hover when the cursor is over it.
+      // Hover: per-node hit test scaled to the sphere's visible radius,
+      // with a generous minimum floor so small back-ish nodes still grab
+      // the cursor. Front-facing nodes win ties (depth-penalized score).
       let hoverIdx = -1;
       let hoverBoost = 0;
       if (mouse.current.active) {
+        let bestScore = -Infinity;
         for (let i = 0; i < projected.length; i++) {
           const [nx, ny, depth] = projected[i];
-          if (depth > 4.8) continue; // back side of the graph shell
+          if (depth > 5.3) continue; // only the deepest back nodes excluded
           const nodeR = 90 / Math.max(1.2, depth - 1.5);
-          const hitR = nodeR * 1.45;
+          const hitR = Math.max(55, nodeR * 1.55);
           const d = Math.hypot(nx - mouse.current.x, ny - mouse.current.y);
           if (d < hitR) {
-            const localBoost = 1 - d / hitR;
-            if (localBoost > hoverBoost) {
-              hoverBoost = localBoost;
+            // Slight front-face bias so overlapping hits prefer the
+            // closer sphere under the cursor.
+            const score = (1 - d / hitR) - depth * 0.02;
+            if (score > bestScore) {
+              bestScore = score;
               hoverIdx = i;
+              hoverBoost = 1 - d / hitR;
             }
           }
         }
