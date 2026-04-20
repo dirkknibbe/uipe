@@ -58,12 +58,12 @@ export function Hero() {
           edges via mask-image, so spheres flow past the nav/rule instead of
           being sharply clipped. */}
       <div
-        className="absolute inset-x-0 -top-8 -bottom-24 z-0 pointer-events-none lg:pointer-events-auto"
+        className="absolute inset-x-0 -top-8 -bottom-48 z-0 pointer-events-none lg:pointer-events-auto"
         style={{
           WebkitMaskImage:
-            "linear-gradient(to bottom, transparent 0%, black 7%, black 88%, transparent 100%)",
+            "linear-gradient(to bottom, transparent 0%, black 6%, black 94%, transparent 100%)",
           maskImage:
-            "linear-gradient(to bottom, transparent 0%, black 7%, black 88%, transparent 100%)",
+            "linear-gradient(to bottom, transparent 0%, black 6%, black 94%, transparent 100%)",
         }}
       >
         <SceneGraph />
