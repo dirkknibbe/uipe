@@ -230,13 +230,16 @@ export function SceneGraphFusion() {
 
         // Faint connecting edges to every already-formed neighbor: when the
         // 2nd sphere materializes, an edge appears to the 1st; and so on.
+        // Edges fade in with sphereProgress and out with the global fadeOut
+        // so they don't snap off at the end of the loop.
         if (i > 0) {
           const prevArrive = (i - 1) * STAGGER + STREAM_DURATION + SPHERE_FORM;
           if (cycle >= prevArrive) {
             const prevAngle = ((i - 1) / SIGNALS.length) * Math.PI * 2 - Math.PI / 4;
             const prevNx = cx + Math.cos(prevAngle) * clusterR;
             const prevNy = cy + Math.sin(prevAngle) * clusterR * 0.75;
-            ctx.strokeStyle = "rgba(168,162,158,0.35)";
+            const edgeAlpha = 0.35 * sphereProgress * fadeOut;
+            ctx.strokeStyle = `rgba(168,162,158,${edgeAlpha})`;
             ctx.lineWidth = 0.8;
             ctx.beginPath();
             ctx.moveTo(prevNx, prevNy);
