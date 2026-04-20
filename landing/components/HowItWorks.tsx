@@ -1,5 +1,7 @@
 "use client";
 
+import { motion } from "motion/react";
+
 type Stream = {
   key: "dom" | "a11y" | "vision" | "time";
   label: string;
@@ -150,64 +152,160 @@ export function HowItWorks() {
               </radialGradient>
             </defs>
 
-            {/* Streams */}
-            {STREAMS.map((s) => (
-              <g key={s.key}>
-                {/* Subtle underlay line to give the stream a faint trail */}
-                <path
-                  d={pathFor(s)}
-                  stroke={s.color}
-                  strokeOpacity={0.12}
-                  strokeWidth={1}
-                  fill="none"
-                />
-                {/* Animated flowing dashes */}
-                <path
-                  d={pathFor(s)}
-                  stroke={s.color}
-                  strokeWidth={1.4}
-                  fill="none"
-                  strokeOpacity={0.9}
-                  className={
-                    s.key === "time" ? "uipe-stream uipe-stream-slow" : "uipe-stream"
-                  }
-                  style={{ animationDelay: `-${s.delay}ms` }}
-                />
-                {/* Origin dot */}
-                <circle
-                  cx={s.start.x}
-                  cy={s.start.y}
-                  r={4}
-                  fill={s.color}
-                  opacity={0.95}
-                />
-              </g>
-            ))}
+            {/* Streams — each knits in from its origin to the center, one
+                after another, in stagger. Full loop: all four knit in,
+                hold, then fade out together. */}
+            {STREAMS.map((s, i) => {
+              const stream_in = 2.0;     // seconds for a strand to draw
+              const stagger = 0.55;      // seconds between strands starting
+              const total_in = stream_in + stagger * (STREAMS.length - 1);
+              const hold = 2.4;
+              const fade = 1.2;
+              const loop = total_in + hold + fade;
+              const myStart = stagger * i;
+              const myEnd = myStart + stream_in;
+              return (
+                <g key={s.key}>
+                  {/* Static underlay trail */}
+                  <path
+                    d={pathFor(s)}
+                    stroke={s.color}
+                    strokeOpacity={0.12}
+                    strokeWidth={1}
+                    fill="none"
+                  />
+                  {/* Motion-driven "knit" — pathLength animates 0→1, stays
+                      lit through hold, then fades opacity at the end. */}
+                  <motion.path
+                    d={pathFor(s)}
+                    stroke={s.color}
+                    strokeWidth={1.6}
+                    fill="none"
+                    strokeLinecap="round"
+                    initial={{ pathLength: 0, opacity: 0.35 }}
+                    animate={{
+                      pathLength: [0, 0, 1, 1, 0],
+                      opacity: [0.35, 0.35, 0.95, 0.95, 0.1],
+                    }}
+                    transition={{
+                      duration: loop,
+                      times: [
+                        0,
+                        myStart / loop,
+                        myEnd / loop,
+                        (total_in + hold) / loop,
+                        1,
+                      ],
+                      repeat: Infinity,
+                      ease: "easeInOut",
+                    }}
+                  />
+                  {/* Packet head — small node that rides the front of the
+                      stream and "arrives" at the center. */}
+                  <motion.circle
+                    r={3.5}
+                    fill={s.color}
+                    initial={{ opacity: 0 }}
+                    animate={{
+                      offsetDistance: ["0%", "0%", "100%", "100%", "100%"],
+                      opacity: [0, 1, 1, 0, 0],
+                    }}
+                    style={{
+                      offsetPath: `path("${pathFor(s)}")`,
+                      offsetRotate: "0deg",
+                    }}
+                    transition={{
+                      duration: loop,
+                      times: [
+                        0,
+                        myStart / loop,
+                        myEnd / loop,
+                        (myEnd + 0.15) / loop,
+                        1,
+                      ],
+                      repeat: Infinity,
+                      ease: "easeInOut",
+                    }}
+                  />
+                  {/* Origin dot pulses when this strand starts drawing */}
+                  <motion.circle
+                    cx={s.start.x}
+                    cy={s.start.y}
+                    r={4}
+                    fill={s.color}
+                    initial={{ opacity: 0.6 }}
+                    animate={{ opacity: [0.6, 0.6, 1, 1, 0.3] }}
+                    transition={{
+                      duration: loop,
+                      times: [
+                        0,
+                        (myStart - 0.1) / loop,
+                        myStart / loop,
+                        (total_in + hold) / loop,
+                        1,
+                      ],
+                      repeat: Infinity,
+                    }}
+                  />
+                </g>
+              );
+            })}
 
-            {/* Central halo */}
-            <circle
+            {/* Central halo — brightens as each strand arrives, peak once
+                all four are in. */}
+            <motion.circle
               cx={CENTER.x}
               cy={CENTER.y}
               r={120}
               fill="url(#uipe-halo-grad)"
-              className="uipe-halo"
+              initial={{ opacity: 0.2, scale: 0.9 }}
+              animate={{
+                opacity: [0.2, 0.28, 0.42, 0.58, 0.75, 0.4, 0.15],
+                scale: [0.9, 0.93, 0.98, 1.04, 1.1, 1.0, 0.9],
+              }}
+              transition={{
+                duration: 2.0 + 0.55 * 3 + 2.4 + 1.2,
+                times: [0, 0.12, 0.28, 0.45, 0.62, 0.82, 1],
+                repeat: Infinity,
+                ease: "easeInOut",
+              }}
+              style={{ transformOrigin: `${CENTER.x}px ${CENTER.y}px` }}
             />
             {/* Central core */}
-            <circle
+            <motion.circle
               cx={CENTER.x}
               cy={CENTER.y}
               r={44}
               fill="url(#uipe-core-grad)"
-              className="uipe-core"
+              initial={{ opacity: 0.4, scale: 0.92 }}
+              animate={{
+                opacity: [0.4, 0.55, 0.7, 0.85, 1.0, 0.65, 0.25],
+                scale: [0.92, 0.95, 1.0, 1.05, 1.12, 1.0, 0.9],
+              }}
+              transition={{
+                duration: 2.0 + 0.55 * 3 + 2.4 + 1.2,
+                times: [0, 0.12, 0.28, 0.45, 0.62, 0.82, 1],
+                repeat: Infinity,
+                ease: "easeInOut",
+              }}
+              style={{ transformOrigin: `${CENTER.x}px ${CENTER.y}px` }}
             />
             {/* Central outline ring */}
-            <circle
+            <motion.circle
               cx={CENTER.x}
               cy={CENTER.y}
               r={56}
               fill="none"
               stroke="rgba(139,92,246,0.55)"
               strokeWidth={1}
+              initial={{ opacity: 0.3 }}
+              animate={{ opacity: [0.3, 0.4, 0.6, 0.85, 0.45, 0.2] }}
+              transition={{
+                duration: 2.0 + 0.55 * 3 + 2.4 + 1.2,
+                times: [0, 0.2, 0.45, 0.62, 0.82, 1],
+                repeat: Infinity,
+                ease: "easeInOut",
+              }}
             />
             {/* Central inner nodes hint — three small instances mirroring the hero */}
             <g opacity={0.95}>
