@@ -90,8 +90,11 @@ function project(p: Pt, w: number, h: number): [number, number, number] {
   const [x, y, z] = p;
   const fov = 3.5;
   const d = fov + z;
-  const px = (x / d) * (w / 6) + w / 2;
-  const py = (y / d) * (h / 6) + h / 2;
+  // Larger scale factor → graph fills more of the hero; copy still readable
+  // on the left half because the hero copy is lg:max-w-[50%].
+  const scale = Math.min(w, h) / 2.4;
+  const px = (x / d) * scale + w / 2;
+  const py = (y / d) * scale + h / 2;
   return [px, py, d];
 }
 
@@ -106,8 +109,9 @@ export function AsciiSpike() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const mouse = useRef({ x: -9999, y: -9999, active: false });
 
-  // 180 samples per sphere — dense enough for libretto-like voxel shading.
-  const spherePoints = useMemo(() => fibSphere(180), []);
+  // 280 samples per sphere — dense enough for libretto-like voxel shading
+  // at the larger on-screen radius.
+  const spherePoints = useMemo(() => fibSphere(280), []);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -230,7 +234,7 @@ export function AsciiSpike() {
         const scroll = t * (6 + (ei % 3) * 2);
         const edgeHot = (hoverIdx === a || hoverIdx === b) ? 0.58 : 0.26;
         // Reserve room around node spheres so they read cleanly.
-        const nodeMargin = 26;
+        const nodeMargin = 44;
 
         for (let i = 0; i <= steps; i++) {
           const frac = i / steps;
@@ -257,7 +261,7 @@ export function AsciiSpike() {
           const y = y1 + (y2 - y1) * frac;
           const distA = Math.hypot(x - x1, y - y1);
           const distB = Math.hypot(x - x2, y - y2);
-          if (distA < 22 || distB < 22) continue;
+          if (distA < 38 || distB < 38) continue;
           ctx.fillStyle = COLOR[p.signal];
           ctx.fillText(p.content, x, y);
         }
@@ -266,7 +270,7 @@ export function AsciiSpike() {
       // 3) Nodes as light-shaded voxel spheres (libretto-style 3D).
       for (let i = 0; i < NODES.length; i++) {
         const [cx, cy, depth] = projected[i];
-        const baseR = 28;
+        const baseR = 48;
         const depthR = baseR / Math.max(1.2, depth - 1.5);
         const boostR = i === hoverIdx ? depthR * (1 + hoverBoost * 0.4) : depthR;
 
