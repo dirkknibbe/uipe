@@ -116,12 +116,11 @@ function project(p: Pt, w: number, h: number): [number, number, number] {
   const [x, y, z] = p;
   const fov = 3.5;
   const d = fov + z;
-  // Larger scale factor → graph fills more of the hero; copy still readable
-  // on the left half because the hero copy is lg:max-w-[50%].
-  // Use min(w,h) / 1.1 — graph fills ~viewport on short dimension and
-  // deliberately overflows the wide dimension so ASCII bleeds off the
-  // left/right edges (feels unbounded rather than boxed).
-  const scale = Math.min(w, h) / 1.1;
+  // Scale is keyed primarily to width (w/3.2) but capped by height so the
+  // graph can't grow so tall that top-hemisphere spheres overflow the
+  // canvas and get clipped. With GRAPH_RADIUS=1.7 the graph's vertical
+  // extent stays within ±0.94 * scale, which always fits inside h * 0.9.
+  const scale = Math.min(w / 3.2, h / 2.2);
   const px = (x / d) * scale + w / 2;
   const py = (y / d) * scale + h / 2;
   return [px, py, d];

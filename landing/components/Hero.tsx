@@ -57,20 +57,7 @@ export function Hero() {
       {/* Scene graph — extends beyond the hero boundaries and fades at the
           edges via mask-image, so spheres flow past the nav/rule instead of
           being sharply clipped. */}
-      <div
-        className="absolute inset-x-0 -top-8 -bottom-[180px] z-[2] pointer-events-none lg:pointer-events-auto"
-        style={{
-          // Fade only the top so ASCII appears to go behind the nav; the
-          // bottom stays fully opaque. The parent section's z-[5] and this
-          // wrapper's z-[2] together lift the canvas above the next
-          // section so spheres that cross the boundary render at full
-          // brightness and aren't clipped by Problem's stacking.
-          WebkitMaskImage:
-            "linear-gradient(to bottom, transparent 0%, black 6%, black 100%)",
-          maskImage:
-            "linear-gradient(to bottom, transparent 0%, black 6%, black 100%)",
-        }}
-      >
+      <div className="absolute inset-x-0 top-16 -bottom-[240px] z-[2] pointer-events-none lg:pointer-events-auto">
         <SceneGraph />
       </div>
 
