@@ -4,26 +4,52 @@ import { useEffect, useMemo, useRef } from "react";
 type Signal = "DOM" | "a11y" | "vision" | "time";
 type Pt = [number, number, number];
 
-const NODES: Array<{ pos: Pt; signal: Signal }> = [
-  { pos: [1.8, 0.6, 0], signal: "DOM" },
-  { pos: [-1.5, 1.2, 0.8], signal: "DOM" },
-  { pos: [0.8, -1.8, 0.3], signal: "DOM" },
-  { pos: [1.2, 1.0, -1.2], signal: "a11y" },
-  { pos: [-1.9, -0.4, 0.5], signal: "a11y" },
-  { pos: [0.2, 1.9, 0.4], signal: "a11y" },
-  { pos: [-0.6, -1.0, 1.8], signal: "vision" },
-  { pos: [1.8, -0.8, -0.6], signal: "vision" },
-  { pos: [-1.3, 0.5, -1.6], signal: "vision" },
-  { pos: [0.5, 0.0, 2.0], signal: "time" },
-  { pos: [-0.8, 1.6, -0.8], signal: "time" },
-  { pos: [0.9, -1.4, -1.3], signal: "time" },
-];
+const SIGNAL_CYCLE: Signal[] = ["DOM", "a11y", "vision", "time"];
 
-const EDGES: Array<[number, number]> = [
-  [0, 1], [0, 3], [1, 2], [2, 5], [3, 4], [4, 6],
-  [5, 9], [6, 7], [7, 10], [8, 11], [9, 10], [10, 11],
-  [0, 9], [3, 5], [6, 11], [1, 8], [4, 7], [2, 10], [8, 9], [11, 0],
-];
+// Place 12 nodes on a fibonacci sphere — the whole graph reads as a single
+// 3D polyhedron. Each node is also a voxel sphere, so the hero is
+// "spheres-on-a-sphere."
+const GRAPH_RADIUS = 2.2;
+function buildFibNodes(count: number): Array<{ pos: Pt; signal: Signal }> {
+  const out: Array<{ pos: Pt; signal: Signal }> = [];
+  for (let i = 0; i < count; i++) {
+    const t = (i + 0.5) / count;
+    const theta = Math.acos(1 - 2 * t);
+    const phi = Math.PI * (1 + Math.sqrt(5)) * i;
+    out.push({
+      pos: [
+        GRAPH_RADIUS * Math.sin(theta) * Math.cos(phi),
+        GRAPH_RADIUS * Math.sin(theta) * Math.sin(phi),
+        GRAPH_RADIUS * Math.cos(theta),
+      ],
+      signal: SIGNAL_CYCLE[i % 4],
+    });
+  }
+  return out;
+}
+const NODES = buildFibNodes(12);
+
+// Connect each node to its 3 nearest neighbors — clean graph-on-sphere.
+function buildNearestEdges(nodes: typeof NODES, k = 3): Array<[number, number]> {
+  const edges: Array<[number, number]> = [];
+  const seen = new Set<string>();
+  for (let i = 0; i < nodes.length; i++) {
+    const dists = nodes.map((n, j) => {
+      if (j === i) return { j, d: Infinity };
+      const dx = n.pos[0] - nodes[i].pos[0];
+      const dy = n.pos[1] - nodes[i].pos[1];
+      const dz = n.pos[2] - nodes[i].pos[2];
+      return { j, d: dx * dx + dy * dy + dz * dz };
+    }).sort((a, b) => a.d - b.d);
+    for (let n = 0; n < k; n++) {
+      const j = dists[n].j;
+      const key = i < j ? `${i},${j}` : `${j},${i}`;
+      if (!seen.has(key)) { seen.add(key); edges.push(i < j ? [i, j] : [j, i]); }
+    }
+  }
+  return edges;
+}
+const EDGES = buildNearestEdges(NODES, 3);
 
 const CONTENT: Record<Signal, string[]> = {
   DOM: ["<h1>", "<button.primary>", "aria-labelledby", "role=\"banner\""],
@@ -92,7 +118,7 @@ function project(p: Pt, w: number, h: number): [number, number, number] {
   const d = fov + z;
   // Larger scale factor → graph fills more of the hero; copy still readable
   // on the left half because the hero copy is lg:max-w-[50%].
-  const scale = Math.min(w, h) / 2.4;
+  const scale = Math.min(w, h) / 1.7;
   const px = (x / d) * scale + w / 2;
   const py = (y / d) * scale + h / 2;
   return [px, py, d];
@@ -109,9 +135,9 @@ export function AsciiSpike() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const mouse = useRef({ x: -9999, y: -9999, active: false });
 
-  // 280 samples per sphere — dense enough for libretto-like voxel shading
+  // 380 samples per sphere — dense enough for libretto-like voxel shading
   // at the larger on-screen radius.
-  const spherePoints = useMemo(() => fibSphere(280), []);
+  const spherePoints = useMemo(() => fibSphere(380), []);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -234,7 +260,7 @@ export function AsciiSpike() {
         const scroll = t * (6 + (ei % 3) * 2);
         const edgeHot = (hoverIdx === a || hoverIdx === b) ? 0.58 : 0.26;
         // Reserve room around node spheres so they read cleanly.
-        const nodeMargin = 44;
+        const nodeMargin = 62;
 
         for (let i = 0; i <= steps; i++) {
           const frac = i / steps;
@@ -261,7 +287,7 @@ export function AsciiSpike() {
           const y = y1 + (y2 - y1) * frac;
           const distA = Math.hypot(x - x1, y - y1);
           const distB = Math.hypot(x - x2, y - y2);
-          if (distA < 38 || distB < 38) continue;
+          if (distA < 56 || distB < 56) continue;
           ctx.fillStyle = COLOR[p.signal];
           ctx.fillText(p.content, x, y);
         }
@@ -270,7 +296,7 @@ export function AsciiSpike() {
       // 3) Nodes as light-shaded voxel spheres (libretto-style 3D).
       for (let i = 0; i < NODES.length; i++) {
         const [cx, cy, depth] = projected[i];
-        const baseR = 48;
+        const baseR = 70;
         const depthR = baseR / Math.max(1.2, depth - 1.5);
         const boostR = i === hoverIdx ? depthR * (1 + hoverBoost * 0.4) : depthR;
 
