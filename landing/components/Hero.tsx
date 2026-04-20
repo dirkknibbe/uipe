@@ -10,7 +10,7 @@ const SceneGraph = dynamic(
 
 export function Hero() {
   return (
-    <section className="relative min-h-[100dvh] border-b border-[color:var(--color-line)]/40">
+    <section className="relative z-[5] min-h-[100dvh] border-b border-[color:var(--color-line)]/40">
       {/* Top bar — thin hairline rule, spans full width */}
       <header className="relative z-20 border-b border-[color:var(--color-line)]/40">
         <div className="flex items-center justify-between px-6 sm:px-10 h-16">
@@ -58,13 +58,13 @@ export function Hero() {
           edges via mask-image, so spheres flow past the nav/rule instead of
           being sharply clipped. */}
       <div
-        className="absolute inset-x-0 -top-8 -bottom-80 z-[2] pointer-events-none lg:pointer-events-auto"
+        className="absolute inset-x-0 -top-8 -bottom-[180px] z-[2] pointer-events-none lg:pointer-events-auto"
         style={{
-          // Fade only the top (so ASCII appears to go behind the nav).
-          // Bottom stays fully opaque; z-[2] lifts the canvas above the
-          // next section so spheres that cross the section boundary
-          // remain at full brightness instead of being dimmed by the
-          // Problem section's background stacking over them.
+          // Fade only the top so ASCII appears to go behind the nav; the
+          // bottom stays fully opaque. The parent section's z-[5] and this
+          // wrapper's z-[2] together lift the canvas above the next
+          // section so spheres that cross the boundary render at full
+          // brightness and aren't clipped by Problem's stacking.
           WebkitMaskImage:
             "linear-gradient(to bottom, transparent 0%, black 6%, black 100%)",
           maskImage:
