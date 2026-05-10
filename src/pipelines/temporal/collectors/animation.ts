@@ -4,9 +4,17 @@ import type { TemporalEventStream } from '../event-stream.js';
 
 let nextId = 0;
 
+interface AnimationStartState {
+  startTimestamp: number;
+  wallTimeAtStart: number;
+  duration: number;
+  completionTimer?: ReturnType<typeof setTimeout>;
+}
+
 export class AnimationCollector implements Collector {
   readonly name = 'animation';
   private cdp: CDPSession | undefined;
+  private active = new Map<string, AnimationStartState>();
 
   async attach(page: Page, stream: TemporalEventStream): Promise<void> {
     const normalizer = stream.getNormalizer();
@@ -25,6 +33,14 @@ export class AnimationCollector implements Collector {
           ? normalizer.fromCdpMonotonicSeconds(a.startTime)
           : normalizer.fromPerformanceNow(performance.now());
         const duration = a.source?.duration ?? 0;
+        const wallTimeAtStart = Date.now();
+
+        const state: AnimationStartState = {
+          startTimestamp,
+          wallTimeAtStart,
+          duration,
+        };
+        this.active.set(a.id, state);
 
         stream.push({
           id: `anim-start-${++nextId}`,
@@ -39,24 +55,40 @@ export class AnimationCollector implements Collector {
         });
 
         if (duration > 0) {
-          setTimeout(() => {
+          state.completionTimer = setTimeout(() => {
+            // Predicted endpoint based on the start's normalized timestamp.
+            // This avoids mixing host-side and page-side clocks.
             stream.push({
               id: `anim-end-${++nextId}`,
               type: 'animation-end',
-              timestamp: normalizer.fromPerformanceNow(performance.now()),
+              timestamp: startTimestamp + duration,
               payload: { animationId: a.id, reason: 'completed' },
             });
+            this.active.delete(a.id);
           }, duration + 16);
         }
       });
 
       this.cdp.on('Animation.animationCanceled', (params: any) => {
+        const id = params.id;
+        const state = this.active.get(id);
+        let timestamp: number;
+        if (state) {
+          if (state.completionTimer) clearTimeout(state.completionTimer);
+          const elapsed = Date.now() - state.wallTimeAtStart;
+          timestamp = state.startTimestamp + elapsed;
+          this.active.delete(id);
+        } else {
+          // No matching start tracked — fall back to wall-clock-derived.
+          timestamp = normalizer.fromWallTimeMs(Date.now());
+        }
+
         stream.push({
           id: `anim-end-${++nextId}`,
           type: 'animation-end',
-          timestamp: normalizer.fromPerformanceNow(performance.now()),
+          timestamp,
           payload: {
-            animationId: params.id,
+            animationId: id,
             reason: 'canceled',
           },
         });
@@ -67,6 +99,10 @@ export class AnimationCollector implements Collector {
   }
 
   async detach(): Promise<void> {
+    for (const state of this.active.values()) {
+      if (state.completionTimer) clearTimeout(state.completionTimer);
+    }
+    this.active.clear();
     if (this.cdp) {
       try { await this.cdp.detach(); } catch { /* ignore */ }
       this.cdp = undefined;

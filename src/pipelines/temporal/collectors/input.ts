@@ -13,19 +13,25 @@ interface InputBridgePayload {
 
 let nextId = 0;
 
+// Module-level registry indirection. The page-side `__uipeOnInput` binding,
+// once exposed, persists across page navigations and cannot be re-pointed.
+// We dispatch through this registry so each attach() can install a fresh
+// callback (bound to the current stream + normalizer) without re-exposing.
+type InputDispatch = (raw: InputBridgePayload) => void;
+const pageDispatchers = new WeakMap<Page, InputDispatch>();
+
 export class InputCollector implements Collector {
   readonly name = 'input';
-  private attached = false;
+  private page: Page | undefined;
 
   async attach(page: Page, stream: TemporalEventStream): Promise<void> {
-    if (this.attached) return;
     const normalizer = stream.getNormalizer();
     if (!normalizer) {
       console.warn('InputCollector: stream not attached, skipping');
       return;
     }
 
-    await page.exposeFunction('__uipeOnInput', (raw: InputBridgePayload) => {
+    const dispatch: InputDispatch = (raw) => {
       stream.push({
         id: `input-${++nextId}`,
         type: 'input',
@@ -37,7 +43,24 @@ export class InputCollector implements Collector {
           ...(raw.target !== undefined ? { target: raw.target } : {}),
         },
       });
-    });
+    };
+    pageDispatchers.set(page, dispatch);
+
+    try {
+      await page.exposeFunction('__uipeOnInput', (raw: InputBridgePayload) => {
+        const fn = pageDispatchers.get(page);
+        if (fn) fn(raw);
+      });
+    } catch (err) {
+      const msg = (err as Error).message ?? '';
+      if (msg.includes('registered')) {
+        // Binding from a prior attach persists across the page lifecycle.
+        // The registry indirection above ensures it now invokes our new dispatch.
+        console.debug('InputCollector: __uipeOnInput already registered, redirecting via dispatcher');
+      } else {
+        throw err;
+      }
+    }
 
     await page.evaluate(() => {
       const win = window as any;
@@ -73,10 +96,13 @@ export class InputCollector implements Collector {
       }, true);
     });
 
-    this.attached = true;
+    this.page = page;
   }
 
   async detach(): Promise<void> {
-    this.attached = false;
+    if (this.page) {
+      pageDispatchers.delete(this.page);
+      this.page = undefined;
+    }
   }
 }

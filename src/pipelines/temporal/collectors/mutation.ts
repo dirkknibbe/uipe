@@ -12,19 +12,22 @@ interface MutationBridgePayload {
 
 let nextId = 0;
 
+// Module-level registry indirection (see input.ts for rationale).
+type MutationDispatch = (raw: MutationBridgePayload) => void;
+const pageDispatchers = new WeakMap<Page, MutationDispatch>();
+
 export class MutationCollector implements Collector {
   readonly name = 'mutation';
-  private attached = false;
+  private page: Page | undefined;
 
   async attach(page: Page, stream: TemporalEventStream): Promise<void> {
-    if (this.attached) return;
     const normalizer = stream.getNormalizer();
     if (!normalizer) {
       console.warn('MutationCollector: stream not attached, skipping');
       return;
     }
 
-    await page.exposeFunction('__uipeOnMutation', (raw: MutationBridgePayload) => {
+    const dispatch: MutationDispatch = (raw) => {
       stream.push({
         id: `mut-${++nextId}`,
         type: 'mutation',
@@ -36,7 +39,24 @@ export class MutationCollector implements Collector {
           characterData: raw.characterData,
         },
       });
-    });
+    };
+    pageDispatchers.set(page, dispatch);
+
+    try {
+      await page.exposeFunction('__uipeOnMutation', (raw: MutationBridgePayload) => {
+        const fn = pageDispatchers.get(page);
+        if (fn) fn(raw);
+      });
+    } catch (err) {
+      const msg = (err as Error).message ?? '';
+      if (msg.includes('registered')) {
+        // Binding from a prior attach persists across the page lifecycle.
+        // The registry indirection above ensures it now invokes our new dispatch.
+        console.debug('MutationCollector: __uipeOnMutation already registered, redirecting via dispatcher');
+      } else {
+        throw err;
+      }
+    }
 
     await page.evaluate(() => {
       const win = window as any;
@@ -82,10 +102,13 @@ export class MutationCollector implements Collector {
       });
     });
 
-    this.attached = true;
+    this.page = page;
   }
 
   async detach(): Promise<void> {
-    this.attached = false;
+    if (this.page) {
+      pageDispatchers.delete(this.page);
+      this.page = undefined;
+    }
   }
 }
