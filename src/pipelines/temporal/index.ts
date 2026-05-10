@@ -48,3 +48,7 @@ export class TemporalTracker {
     logger.info('TemporalTracker reset');
   }
 }
+
+export { TemporalEventStream } from './event-stream.js';
+export type { TemporalEventStreamOptions, GetEventsFilter, ClockNormalizer } from './event-stream.js';
+export * from './collectors/index.js';

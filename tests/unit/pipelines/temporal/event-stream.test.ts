@@ -164,3 +164,71 @@ describe('TemporalEventStream — attach/detach lifecycle', () => {
     expect(secondNormalizer).not.toBe(firstNormalizer);
   });
 });
+
+describe('TemporalEventStream — collector wiring + navigation', () => {
+  it('attach with collectors invokes each collector.attach', async () => {
+    const stream = new TemporalEventStream();
+    const page = makeMockPage();
+    const c1 = { name: 'c1', attach: vi.fn(async () => {}), detach: vi.fn(async () => {}) };
+    const c2 = { name: 'c2', attach: vi.fn(async () => {}), detach: vi.fn(async () => {}) };
+
+    await stream.attach(page, [c1, c2]);
+
+    expect(c1.attach).toHaveBeenCalledWith(page, stream);
+    expect(c2.attach).toHaveBeenCalledWith(page, stream);
+  });
+
+  it('detach with collectors invokes each collector.detach', async () => {
+    const stream = new TemporalEventStream();
+    const page = makeMockPage();
+    const c1 = { name: 'c1', attach: vi.fn(async () => {}), detach: vi.fn(async () => {}) };
+
+    await stream.attach(page, [c1]);
+    await stream.detach();
+
+    expect(c1.detach).toHaveBeenCalled();
+  });
+
+  it('framenavigated event clears buffer and re-attaches when clearOnNavigate is true', async () => {
+    const stream = new TemporalEventStream({ clearOnNavigate: true });
+    const onMap = new Map<string, Function>();
+    const page = {
+      on: vi.fn((event: string, handler: Function) => { onMap.set(event, handler); }),
+      off: vi.fn(),
+      evaluate: vi.fn(async () => 0),
+      context: vi.fn(() => ({ newCDPSession: vi.fn(async () => ({ send: vi.fn(), on: vi.fn(), off: vi.fn(), detach: vi.fn() })) })),
+    } as unknown as Page;
+    const c1 = { name: 'c1', attach: vi.fn(async () => {}), detach: vi.fn(async () => {}) };
+
+    await stream.attach(page, [c1]);
+    stream.push({ id: 'e1', type: 'input', timestamp: 0, payload: {} as any });
+    expect(stream.size()).toBe(1);
+    expect(c1.attach).toHaveBeenCalledTimes(1);
+
+    const navHandler = onMap.get('framenavigated');
+    expect(navHandler).toBeDefined();
+    await navHandler!({ url: () => 'https://example.com/2' });
+
+    expect(stream.size()).toBe(0);
+    expect(c1.attach).toHaveBeenCalledTimes(2);
+  });
+
+  it('framenavigated does not clear when clearOnNavigate is false', async () => {
+    const stream = new TemporalEventStream({ clearOnNavigate: false });
+    const onMap = new Map<string, Function>();
+    const page = {
+      on: vi.fn((event: string, handler: Function) => { onMap.set(event, handler); }),
+      off: vi.fn(),
+      evaluate: vi.fn(async () => 0),
+      context: vi.fn(() => ({ newCDPSession: vi.fn(async () => ({ send: vi.fn(), on: vi.fn(), off: vi.fn(), detach: vi.fn() })) })),
+    } as unknown as Page;
+    const c1 = { name: 'c1', attach: vi.fn(async () => {}), detach: vi.fn(async () => {}) };
+
+    await stream.attach(page, [c1]);
+    stream.push({ id: 'e1', type: 'input', timestamp: 0, payload: {} as any });
+    const navHandler = onMap.get('framenavigated')!;
+    await navHandler({ url: () => 'https://example.com/2' });
+
+    expect(stream.size()).toBe(1);
+  });
+});

@@ -1,5 +1,6 @@
 import type { Page } from 'playwright';
 import type { TimelineEvent, EventType } from './collectors/types.js';
+import type { Collector } from './collectors/types.js';
 
 export interface TemporalEventStreamOptions {
   capacity?: number;
@@ -35,13 +36,15 @@ export class TemporalEventStream {
   private readonly clearOnNavigate: boolean;
   private attachedPage: Page | undefined;
   private normalizer: ClockNormalizer | undefined;
+  private collectors: Collector[] = [];
+  private framenavigatedHandler: ((frame: any) => Promise<void>) | undefined;
 
   constructor(options: TemporalEventStreamOptions = {}) {
     this.capacity = options.capacity ?? 10000;
     this.clearOnNavigate = options.clearOnNavigate ?? true;
   }
 
-  async attach(page: Page): Promise<void> {
+  async attach(page: Page, collectors: Collector[] = []): Promise<void> {
     if (this.attachedPage) {
       await this.detach();
     }
@@ -56,9 +59,52 @@ export class TemporalEventStream {
       pagePerformanceAnchorMs,
     });
     this.attachedPage = page;
+    this.collectors = collectors;
+
+    for (const c of this.collectors) {
+      try {
+        await c.attach(page, this);
+      } catch (err) {
+        console.warn(`Collector ${c.name} attach failed: ${(err as Error).message}`);
+      }
+    }
+
+    this.framenavigatedHandler = async () => {
+      if (this.clearOnNavigate) {
+        this.clear();
+      }
+      if (!this.attachedPage) return;
+      const p = this.attachedPage;
+      // refresh anchors
+      const newWall = Date.now();
+      const newPerf = performance.now();
+      const newPagePerf = await p.evaluate(() => performance.now()).catch(() => 0);
+      this.normalizer = buildNormalizer({
+        wallAnchorMs: newWall,
+        performanceAnchorMs: newPerf,
+        pagePerformanceAnchorMs: newPagePerf,
+      });
+      for (const c of this.collectors) {
+        try {
+          await c.detach();
+          await c.attach(p, this);
+        } catch (err) {
+          console.warn(`Collector ${c.name} reattach failed: ${(err as Error).message}`);
+        }
+      }
+    };
+    page.on('framenavigated', this.framenavigatedHandler);
   }
 
   async detach(): Promise<void> {
+    if (this.attachedPage && this.framenavigatedHandler) {
+      this.attachedPage.off('framenavigated', this.framenavigatedHandler);
+      this.framenavigatedHandler = undefined;
+    }
+    for (const c of this.collectors) {
+      try { await c.detach(); } catch { /* ignore */ }
+    }
+    this.collectors = [];
     this.attachedPage = undefined;
     this.normalizer = undefined;
   }

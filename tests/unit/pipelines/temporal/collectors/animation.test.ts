@@ -19,6 +19,8 @@ const makeMockCdp = () => {
 };
 
 const makeMockPage = (cdp: CDPSession) => ({
+  on: vi.fn(),
+  off: vi.fn(),
   evaluate: vi.fn(async () => 0),
   context: vi.fn(() => ({ newCDPSession: vi.fn(async () => cdp) })),
 }) as unknown as Page;
