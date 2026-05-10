@@ -1,8 +1,5 @@
 import type { Page } from 'playwright';
-// Forward declaration — TemporalEventStream defined in Task 2
-export interface TemporalEventStream {
-  push(event: TimelineEvent): void;
-}
+import type { TemporalEventStream } from '../event-stream.js';
 
 export type EventType =
   | 'input'
