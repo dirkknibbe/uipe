@@ -11,12 +11,60 @@ export interface GetEventsFilter {
   types?: EventType[];
 }
 
+export interface ClockNormalizer {
+  fromWallTimeMs(wallMs: number): number;
+  fromPerformanceNow(perfNow: number): number;
+  fromCdpMonotonicSeconds(secs: number): number;
+}
+
+interface ClockAnchors {
+  wallAnchorMs: number;
+  performanceAnchorMs: number;
+  pagePerformanceAnchorMs: number;
+}
+
+const buildNormalizer = (anchors: ClockAnchors): ClockNormalizer => ({
+  fromWallTimeMs: (wallMs) => wallMs - anchors.wallAnchorMs,
+  fromPerformanceNow: (perfNow) => perfNow - anchors.performanceAnchorMs,
+  fromCdpMonotonicSeconds: (secs) => (secs * 1000) - anchors.pagePerformanceAnchorMs,
+});
+
 export class TemporalEventStream {
   private buffer: TimelineEvent[] = [];
   private readonly capacity: number;
+  private readonly clearOnNavigate: boolean;
+  private attachedPage: Page | undefined;
+  private normalizer: ClockNormalizer | undefined;
 
   constructor(options: TemporalEventStreamOptions = {}) {
     this.capacity = options.capacity ?? 10000;
+    this.clearOnNavigate = options.clearOnNavigate ?? true;
+  }
+
+  async attach(page: Page): Promise<void> {
+    if (this.attachedPage) {
+      await this.detach();
+    }
+
+    const wallAnchorMs = Date.now();
+    const performanceAnchorMs = performance.now();
+    const pagePerformanceAnchorMs = await page.evaluate(() => performance.now()).catch(() => 0);
+
+    this.normalizer = buildNormalizer({
+      wallAnchorMs,
+      performanceAnchorMs,
+      pagePerformanceAnchorMs,
+    });
+    this.attachedPage = page;
+  }
+
+  async detach(): Promise<void> {
+    this.attachedPage = undefined;
+    this.normalizer = undefined;
+  }
+
+  getNormalizer(): ClockNormalizer | undefined {
+    return this.normalizer;
   }
 
   push(event: TimelineEvent): void {

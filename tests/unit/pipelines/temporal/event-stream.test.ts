@@ -84,3 +84,83 @@ describe('TemporalEventStream — buffer and query', () => {
     expect(events[events.length - 1].id).toBe('e10004');
   });
 });
+
+import { vi } from 'vitest';
+import type { Page } from 'playwright';
+
+const makeMockPage = (overrides: Partial<Page> = {}): Page => {
+  const handlers = new Map<string, Function[]>();
+  return {
+    on: vi.fn((event: string, handler: Function) => {
+      const list = handlers.get(event) ?? [];
+      list.push(handler);
+      handlers.set(event, list);
+    }),
+    off: vi.fn(),
+    evaluate: vi.fn(async () => 0),
+    context: vi.fn(() => ({ newCDPSession: vi.fn(async () => ({ send: vi.fn(), on: vi.fn(), off: vi.fn(), detach: vi.fn() })) })),
+    ...overrides,
+  } as unknown as Page;
+};
+
+describe('TemporalEventStream — attach/detach lifecycle', () => {
+  it('attach captures clock anchors and exposes a ClockNormalizer', async () => {
+    const stream = new TemporalEventStream();
+    const page = makeMockPage();
+
+    await stream.attach(page);
+
+    const normalizer = stream.getNormalizer();
+    expect(normalizer).toBeDefined();
+    expect(typeof normalizer!.fromWallTimeMs).toBe('function');
+    expect(typeof normalizer!.fromPerformanceNow).toBe('function');
+  });
+
+  it('ClockNormalizer.fromWallTimeMs subtracts the wall anchor', async () => {
+    const stream = new TemporalEventStream();
+    const page = makeMockPage();
+    await stream.attach(page);
+
+    const normalizer = stream.getNormalizer()!;
+    const wallNow = Date.now();
+    const normalized = normalizer.fromWallTimeMs(wallNow + 100);
+    expect(normalized).toBeGreaterThanOrEqual(99);
+    expect(normalized).toBeLessThan(200);
+  });
+
+  it('ClockNormalizer.fromPerformanceNow subtracts the perf anchor', async () => {
+    const stream = new TemporalEventStream();
+    const page = makeMockPage();
+    await stream.attach(page);
+
+    const normalizer = stream.getNormalizer()!;
+    const perfNow = performance.now();
+    const normalized = normalizer.fromPerformanceNow(perfNow + 50);
+    expect(normalized).toBeGreaterThanOrEqual(49);
+    expect(normalized).toBeLessThan(100);
+  });
+
+  it('detach is idempotent and clears the normalizer', async () => {
+    const stream = new TemporalEventStream();
+    const page = makeMockPage();
+    await stream.attach(page);
+    expect(stream.getNormalizer()).toBeDefined();
+
+    await stream.detach();
+    expect(stream.getNormalizer()).toBeUndefined();
+    await stream.detach();   // second call must not throw
+  });
+
+  it('attach is idempotent — second attach detaches first', async () => {
+    const stream = new TemporalEventStream();
+    const page1 = makeMockPage();
+    const page2 = makeMockPage();
+    await stream.attach(page1);
+    const firstNormalizer = stream.getNormalizer();
+
+    await stream.attach(page2);
+    const secondNormalizer = stream.getNormalizer();
+    expect(secondNormalizer).toBeDefined();
+    expect(secondNormalizer).not.toBe(firstNormalizer);
+  });
+});
