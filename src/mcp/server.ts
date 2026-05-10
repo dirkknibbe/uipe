@@ -11,6 +11,14 @@ import { toJSON, toCompact } from '../pipelines/fusion/serializer.js';
 import { affordanceToText, formatVisualAnalysis } from './serializer.js';
 import { Config } from '../config.js';
 import type { AnalysisDepth } from '../types/index.js';
+import { TemporalEventStream } from '../pipelines/temporal/event-stream.js';
+import {
+  InputCollector,
+  NetworkCollector,
+  AnimationCollector,
+  MutationCollector,
+} from '../pipelines/temporal/collectors/index.js';
+import { makeGetTimelineTool } from './tools/get-timeline.js';
 
 export interface ServerConfig {
   visual?: VisualPipelineConfig;
@@ -29,6 +37,7 @@ export const TOOL_NAMES = [
   'compare_states',
   'watch',
   'stop_watch',
+  'get_timeline',
 ] as const;
 
 export function createServer(config: ServerConfig = {}): McpServer {
@@ -40,14 +49,28 @@ export function createServer(config: ServerConfig = {}): McpServer {
   const tracker = new TemporalTracker();
   const affordance = new AffordanceEngine();
   const visual = config.visual ? new VisualPipeline(config.visual) : null;
+  const eventStream = new TemporalEventStream();
   let frameCapture: FrameCapture | null = null;
   let keyframeCount = 0;
   let watchStartTime = 0;
   let launchPromise: Promise<void> | undefined;
+  let streamAttachedTo: import('playwright').Page | undefined;
 
   async function ensureLaunched(): Promise<void> {
     if (!launchPromise) launchPromise = runtime.launch();
     return launchPromise;
+  }
+
+  async function ensureStreamAttached(): Promise<void> {
+    const page = runtime.getPage();
+    if (streamAttachedTo === page) return;
+    await eventStream.attach(page, [
+      new InputCollector(),
+      new NetworkCollector(),
+      new AnimationCollector(),
+      new MutationCollector(),
+    ]);
+    streamAttachedTo = page;
   }
 
   async function captureGraph(includeVisual: boolean | AnalysisDepth = false) {
@@ -81,6 +104,7 @@ export function createServer(config: ServerConfig = {}): McpServer {
     },
     async ({ url, visual: includeVisual }) => {
       await ensureLaunched();
+      await ensureStreamAttached();
       await runtime.navigate(url);
       const graph = await captureGraph(includeVisual);
       const transition = tracker.observe(graph);
@@ -415,6 +439,27 @@ export function createServer(config: ServerConfig = {}): McpServer {
       ];
       frameCapture = null;
       return { content: [{ type: 'text' as const, text: lines.join('\n') }] };
+    },
+  );
+
+  // Tool 13: get_timeline
+  const timelineTool = makeGetTimelineTool(eventStream);
+  server.registerTool(
+    timelineTool.name,
+    {
+      title: 'Get Temporal Event Timeline',
+      description: timelineTool.description,
+      inputSchema: z.object({
+        since: z.number().optional().describe('Only return events with timestamp >= since (stream-relative ms)'),
+        types: z
+          .array(z.enum(['input', 'mutation', 'network-request', 'network-response', 'animation-start', 'animation-end', 'phash-change']))
+          .optional()
+          .describe('Filter by event types'),
+      }),
+    },
+    async (args) => {
+      const { events } = await timelineTool.handler(args);
+      return { content: [{ type: 'text' as const, text: JSON.stringify(events, null, 2) }] };
     },
   );
 
