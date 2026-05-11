@@ -17,3 +17,7 @@ ndarray = "0.16"
 anyhow = "1.0"
 thiserror = "1.0"
 image = { version = "0.25", default-features = false, features = ["png"] }
+linfa = "0.7"
+linfa-clustering = { version = "0.7", features = ["serde"] }
+# linfa uses ndarray 0.15; alias so clustering.rs can create arrays linfa can accept
+ndarray15 = { package = "ndarray", version = "0.15" }
