@@ -9,6 +9,9 @@ name = "uipe-vision"
 path = "src/main.rs"
 
 [dependencies]
+# ort rc.9 is the last release-candidate with x86_64-apple-darwin prebuilts
+# in the download-binaries CDN. rc.10+ dropped Intel Mac. Pinned exactly
+# because pre-release Cargo semver does not range-match.
 ort = { version = "2.0.0-rc.9", default-features = false, features = ["ndarray", "download-binaries"] }
 ndarray = "0.16"
 anyhow = "1.0"

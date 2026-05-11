@@ -1,2 +1,5 @@
 [toolchain]
-channel = "1.95.0"
+# Minimum-floor pin: edition2024 (used transitively by ureq-proto via ort)
+# requires Rust >= 1.85. "stable" tracks the latest stable, always satisfying
+# the floor. If a future stable breaks the build, pin to a specific 1.x.y here.
+channel = "stable"
