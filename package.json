@@ -13,6 +13,7 @@
     "README.md"
   ],
   "scripts": {
+    "bench:flow": "pnpm exec tsx bench/optical-flow-eval.ts",
     "build": "tsc",
     "build:rust": "cargo build --release --bin uipe-vision",
     "mcp": "node dist/src/mcp/index.js",
