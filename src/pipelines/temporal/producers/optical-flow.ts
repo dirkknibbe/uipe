@@ -44,6 +44,9 @@ export class FlowProducer extends EventEmitter {
   private frameSource: FrameSource | null = null;
   private readonly keyframeListener: (kf: KeyframeLike) => void;
   private stdoutBuffer = '';
+  // TODO(v2): per-frame inference timeout (>500ms) + rolling drop-rate warning
+  // (spec §Error handling). Sidecar inference is async on stdout, so RTT
+  // measurement needs a correlation id round-trip we haven't added yet.
   public framesAccepted = 0;
   public framesDropped = 0;
 
