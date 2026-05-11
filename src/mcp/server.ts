@@ -1,5 +1,8 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
+import { resolve } from 'node:path';
+import { existsSync } from 'node:fs';
+import { EventEmitter } from 'node:events';
 import { BrowserRuntime } from '../browser/runtime.js';
 import { StructuralPipeline } from '../pipelines/structural/index.js';
 import { FusionEngine } from '../pipelines/fusion/index.js';
@@ -18,7 +21,15 @@ import {
   AnimationCollector,
   MutationCollector,
 } from '../pipelines/temporal/collectors/index.js';
+import { FlowProducer } from '../pipelines/temporal/producers/optical-flow.js';
+import { FlowCollector } from '../pipelines/temporal/collectors/optical-flow.js';
+import { createLogger } from '../utils/logger.js';
+import type { Collector } from '../pipelines/temporal/collectors/types.js';
 import { makeGetTimelineTool } from './tools/get-timeline.js';
+
+const log = createLogger('mcp-server');
+const FLOW_BINARY_PATH = process.env.UIPE_FLOW_BINARY ??
+  resolve(process.cwd(), 'target/release/uipe-vision');
 
 export interface ServerConfig {
   visual?: VisualPipelineConfig;
@@ -51,6 +62,13 @@ export function createServer(config: ServerConfig = {}): McpServer {
   const visual = config.visual ? new VisualPipeline(config.visual) : null;
   const eventStream = new TemporalEventStream();
   let frameCapture: FrameCapture | null = null;
+  let flowProducer: FlowProducer | null = null;
+  let flowCollector: FlowCollector | null = null;
+  // EventEmitter that bridges FrameCapture keyframes (frame/timestamp) to the
+  // FlowProducer's FrameSource shape (pngBytes/phash/timestamp). Created lazily
+  // in the watch tool handler; null when watch is not active.
+  let flowBridge: EventEmitter | null = null;
+  let flowBridgeListener: ((kf: { frame: Buffer; timestamp: number }) => void) | null = null;
   let keyframeCount = 0;
   let watchStartTime = 0;
   let launchPromise: Promise<void> | undefined;
@@ -64,12 +82,31 @@ export function createServer(config: ServerConfig = {}): McpServer {
   async function ensureStreamAttached(): Promise<void> {
     const page = runtime.getPage();
     if (streamAttachedTo === page) return;
-    await eventStream.attach(page, [
+
+    const collectors: Collector[] = [
       new InputCollector(),
       new NetworkCollector(),
       new AnimationCollector(),
       new MutationCollector(),
-    ]);
+    ];
+
+    if (existsSync(FLOW_BINARY_PATH)) {
+      if (!flowProducer || flowProducer.disabled) {
+        flowProducer = new FlowProducer({ binaryPath: FLOW_BINARY_PATH });
+        flowProducer.on('disabled', () => {
+          log.warn('optical-flow sidecar disabled after consecutive failures', { binaryPath: FLOW_BINARY_PATH });
+        });
+        await flowProducer.start();
+      }
+      if (!flowCollector) {
+        flowCollector = new FlowCollector(flowProducer);
+      }
+      collectors.push(flowCollector);
+    } else {
+      log.debug('optical-flow sidecar binary missing, skipping flow pipeline', { binaryPath: FLOW_BINARY_PATH });
+    }
+
+    await eventStream.attach(page, collectors);
     streamAttachedTo = page;
   }
 
@@ -407,6 +444,21 @@ export function createServer(config: ServerConfig = {}): McpServer {
       });
 
       await frameCapture.start(runtime.getPage());
+
+      // Option A: adapter bridge — listens on FrameCapture 'keyframe' events
+      // (shape: { frame, timestamp }) and re-emits with the FlowProducer's
+      // FrameSource shape (pngBytes, phash, timestamp), computing phash lazily.
+      if (flowProducer) {
+        flowBridge = new EventEmitter();
+        flowBridgeListener = async (kf: { frame: Buffer; timestamp: number }) => {
+          if (!flowProducer || !flowBridge) return;
+          const phash = await frameCapture!.perceptualHash(kf.frame);
+          flowBridge.emit('keyframe', { pngBytes: kf.frame, phash, timestamp: kf.timestamp });
+        };
+        frameCapture.on('keyframe', flowBridgeListener);
+        flowProducer.attachFrameSource(flowBridge);
+      }
+
       return { content: [{ type: 'text' as const, text: 'Watching page for visual changes. Call stop_watch to stop and get summary.' }] };
     },
   );
@@ -424,6 +476,13 @@ export function createServer(config: ServerConfig = {}): McpServer {
         return { content: [{ type: 'text' as const, text: 'Not currently watching. Call watch first.' }] };
       }
       await frameCapture.stop();
+
+      // Detach the optical-flow bridge before clearing frameCapture
+      if (flowProducer) flowProducer.detachFrameSource();
+      if (frameCapture && flowBridgeListener) frameCapture.off('keyframe', flowBridgeListener);
+      flowBridge = null;
+      flowBridgeListener = null;
+
       const durationMs = Date.now() - watchStartTime;
       const history = tracker.getHistory();
       const transitionTypes = history.slice(-keyframeCount)
