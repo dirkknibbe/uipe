@@ -14,6 +14,7 @@
   ],
   "scripts": {
     "build": "tsc",
+    "build:rust": "cargo build --release --bin uipe-vision",
     "mcp": "node dist/src/mcp/index.js",
     "dev": "tsx src/index.ts",
     "test": "vitest run",
