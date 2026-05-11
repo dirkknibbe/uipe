@@ -9,3 +9,7 @@ name = "uipe-vision"
 path = "src/main.rs"
 
 [dependencies]
+ort = { version = "2.0.0-rc.9", default-features = false, features = ["ndarray", "download-binaries"] }
+ndarray = "0.16"
+anyhow = "1.0"
+thiserror = "1.0"
