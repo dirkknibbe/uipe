@@ -1,3 +1,4 @@
+mod classifier;
 mod clustering;
 mod image_io;
 mod inference;
