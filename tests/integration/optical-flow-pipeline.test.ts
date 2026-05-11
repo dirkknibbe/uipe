@@ -1,10 +1,11 @@
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect } from 'vitest';
 import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { EventEmitter } from 'node:events';
 import { FlowProducer } from '../../src/pipelines/temporal/producers/optical-flow.js';
 import { FlowCollector } from '../../src/pipelines/temporal/collectors/optical-flow.js';
 import { TemporalEventStream } from '../../src/pipelines/temporal/event-stream.js';
+import type { OpticalFlowMotionPayload } from '../../src/pipelines/temporal/collectors/types.js';
 import sharp from 'sharp';
 import { spawn } from 'node:child_process';
 import type { Page } from 'playwright';
@@ -76,10 +77,7 @@ describe.skipIf(!modelAvailable)('optical-flow pipeline integration', () => {
     const motionEvents = stream.getEvents({ types: ['optical-flow-motion'] });
     expect(motionEvents.length).toBeGreaterThan(0);
     expect(
-      motionEvents.some((e) => {
-        const payload = e.payload as any;
-        return payload.pattern === 'translation';
-      })
+      motionEvents.some((e) => (e.payload as OpticalFlowMotionPayload).pattern === 'translation'),
     ).toBe(true);
 
     await producer.stop();
