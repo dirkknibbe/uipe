@@ -97,11 +97,9 @@ export function createServer(config: ServerConfig = {}): McpServer {
           log.warn('optical-flow sidecar disabled after consecutive failures', { binaryPath: FLOW_BINARY_PATH });
         });
         await flowProducer.start();
-      }
-      if (!flowCollector) {
         flowCollector = new FlowCollector(flowProducer);
       }
-      collectors.push(flowCollector);
+      collectors.push(flowCollector!);
     } else {
       log.debug('optical-flow sidecar binary missing, skipping flow pipeline', { binaryPath: FLOW_BINARY_PATH });
     }
@@ -452,8 +450,12 @@ export function createServer(config: ServerConfig = {}): McpServer {
         flowBridge = new EventEmitter();
         flowBridgeListener = async (kf: { frame: Buffer; timestamp: number }) => {
           if (!flowProducer || !flowBridge) return;
-          const phash = await frameCapture!.perceptualHash(kf.frame);
-          flowBridge.emit('keyframe', { pngBytes: kf.frame, phash, timestamp: kf.timestamp });
+          try {
+            const phash = await frameCapture!.perceptualHash(kf.frame);
+            flowBridge.emit('keyframe', { pngBytes: kf.frame, phash, timestamp: kf.timestamp });
+          } catch (err) {
+            log.warn('perceptualHash failed, skipping frame for optical-flow', { error: String(err) });
+          }
         };
         frameCapture.on('keyframe', flowBridgeListener);
         flowProducer.attachFrameSource(flowBridge);
