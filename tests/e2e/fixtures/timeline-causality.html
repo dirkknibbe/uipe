@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>UIPE Timeline Causality Fixture</title>
+  <style>
+    body { font-family: sans-serif; padding: 20px; }
+    #target {
+      width: 100px; height: 100px; background: #4a90e2;
+      transition: none;
+    }
+    #target.slide-in {
+      animation: slide-in 300ms ease-out forwards;
+    }
+    @keyframes slide-in {
+      from { transform: translateX(-200px); opacity: 0; }
+      to   { transform: translateX(0);      opacity: 1; }
+    }
+    #log { margin-top: 20px; font-family: monospace; font-size: 12px; }
+  </style>
+</head>
+<body>
+  <button id="trigger" data-testid="trigger">Trigger sequence</button>
+  <div id="target"></div>
+  <div id="log"></div>
+
+  <script>
+    const log = document.getElementById('log');
+    const append = (s) => { const p = document.createElement('div'); p.textContent = s; log.appendChild(p); };
+
+    document.getElementById('trigger').addEventListener('click', async () => {
+      // 1. Synchronous DOM mutation — add a marker div
+      const marker = document.createElement('div');
+      marker.id = 'marker-pre';
+      marker.textContent = 'pre-fetch marker';
+      document.body.appendChild(marker);
+      append('[1] mutation: marker-pre added');
+
+      // 2. Network request
+      append('[2] fetch start');
+      let response;
+      try {
+        response = await fetch('/timeline-test-endpoint?delay=200');
+      } catch (e) {
+        append('[2x] fetch error: ' + e.message);
+      }
+      append('[3] fetch end (status ' + (response?.status ?? 'n/a') + ')');
+
+      // 3. Start animation
+      const target = document.getElementById('target');
+      target.classList.add('slide-in');
+      append('[4] animation started');
+
+      // 4. Second mutation after fetch completes — remove the marker
+      const m = document.getElementById('marker-pre');
+      if (m) m.remove();
+      append('[5] mutation: marker-pre removed');
+    });
+  </script>
+</body>
+</html>
