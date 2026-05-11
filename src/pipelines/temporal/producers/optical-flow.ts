@@ -1,6 +1,5 @@
 import { type ChildProcess, spawn as nodeSpawn } from 'node:child_process';
 import { EventEmitter } from 'node:events';
-import type { Buffer as NodeBuffer } from 'node:buffer';
 import { createLogger } from '../../../utils/logger.js';
 
 export type SidecarSpawner = (binaryPath: string, args: string[]) => ChildProcess;
