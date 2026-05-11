@@ -8,7 +8,10 @@ export type EventType =
   | 'network-response'
   | 'animation-start'
   | 'animation-end'
-  | 'phash-change';
+  | 'phash-change'
+  | 'optical-flow-raw'
+  | 'optical-flow-region'
+  | 'optical-flow-motion';
 
 export interface InputPayload {
   kind: 'click' | 'keydown';
@@ -54,6 +57,42 @@ export interface PHashChangePayload {
   hammingDistance: number;
 }
 
+export interface OpticalFlowRawPayload {
+  frameTimestamp: number;
+  keypoints: Array<{ x: number; y: number; vx: number; vy: number; magnitude: number }>;
+  gridSummary: { cols: number; rows: number; vectors: number[] };
+}
+
+export interface OpticalFlowRegionPayload {
+  frameTimestamp: number;
+  regionId: string;
+  bbox: { x: number; y: number; w: number; h: number };
+  primitives: {
+    meanVelocity: { vx: number; vy: number };
+    divergence: number;
+    curl: number;
+    speedVariance: number;
+    pointCount: number;
+  };
+}
+
+export type MotionPattern = 'translation' | 'scale' | 'rotation' | 'stillness';
+
+export type MotionPatternParams =
+  | { direction: { vx: number; vy: number }; speedPxPerSec: number }
+  | { sign: 'expand' | 'contract'; centroid: { x: number; y: number }; rate: number }
+  | { sign: 'cw' | 'ccw'; centroid: { x: number; y: number }; angularSpeedRadPerSec: number }
+  | { durationMs: number }
+  | Record<string, never>;
+
+export interface OpticalFlowMotionPayload {
+  endTs?: number;
+  regionId: string;
+  pattern: MotionPattern;
+  params: MotionPatternParams;
+  confidence: number;
+}
+
 export type PayloadFor<T extends EventType> =
   T extends 'input'             ? InputPayload :
   T extends 'mutation'          ? MutationPayload :
@@ -62,6 +101,9 @@ export type PayloadFor<T extends EventType> =
   T extends 'animation-start'   ? AnimationStartPayload :
   T extends 'animation-end'     ? AnimationEndPayload :
   T extends 'phash-change'      ? PHashChangePayload :
+  T extends 'optical-flow-raw'    ? OpticalFlowRawPayload :
+  T extends 'optical-flow-region' ? OpticalFlowRegionPayload :
+  T extends 'optical-flow-motion' ? OpticalFlowMotionPayload :
   never;
 
 export interface TimelineEvent<T extends EventType = EventType> {

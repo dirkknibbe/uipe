@@ -13,13 +13,16 @@
     "README.md"
   ],
   "scripts": {
+    "bench:flow": "pnpm exec tsx bench/optical-flow-eval.ts",
     "build": "tsc",
+    "build:rust": "cargo build --release --bin uipe-vision",
     "mcp": "node dist/src/mcp/index.js",
     "dev": "tsx src/index.ts",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
     "lint": "eslint src tests --ext .ts",
+    "setup:flow-model": "pnpm exec tsx scripts/download-flow-model.ts",
     "start:dev": "bash scripts/start.sh",
     "prepublishOnly": "pnpm run build"
   },

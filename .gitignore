@@ -13,3 +13,5 @@ worktrees/
 sidecar/omniparser/weights/
 sidecar/omniparser/.venv/
 *.pyc
+target/
+crates/uipe-vision/models/*.onnx
