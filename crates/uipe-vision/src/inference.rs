@@ -50,14 +50,15 @@ pub fn run_inference(
     let (n, c, h, w) = (shape[0], shape[1], shape[2], shape[3]);
     anyhow::ensure!(n == 1 && c == 2, "unexpected flow output shape: {shape:?}");
 
-    let mut vectors = Vec::with_capacity(2 * h * w);
-    for y in 0..h {
-        for x in 0..w {
-            let vx = view[[0, 0, y, x]];
-            let vy = view[[0, 1, y, x]];
-            vectors.push(vx);
-            vectors.push(vy);
-        }
+    // Tensor layout is [N=1, C=2, H, W] channels-major: the vx plane comes first
+    // (h*w contiguous floats), then the vy plane. Two scans through contiguous memory
+    // beats interleaved 4D indexing, which thrashes cache by jumping between planes.
+    let raw = view.as_slice().context("flow tensor must be contiguous")?;
+    let plane = h * w;
+    let mut vectors = Vec::with_capacity(2 * plane);
+    for i in 0..plane {
+        vectors.push(raw[i]);          // vx
+        vectors.push(raw[plane + i]);  // vy
     }
 
     Ok(FlowField { width: w, height: h, vectors })
