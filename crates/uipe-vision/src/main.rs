@@ -97,6 +97,11 @@ fn main() -> Result<()> {
         // Region events + classifier
         let regions = cluster_flow(&flow);
         for region in &regions {
+            // TODO(region-id-stability): DBSCAN cluster IDs reset per call and the
+            // centroid-rounded suffix drifts with sub-pixel motion, so PatternTracker
+            // currently fires Start/End every frame for moving regions instead of
+            // recognizing persistence. Needs inter-frame IoU-based region matching
+            // (own follow-up task — see plan's open-questions section).
             let region_id = format!("r{}-{:.0}-{:.0}", region.id, region.bbox.x, region.bbox.y);
             let p = extract_primitives(region);
             let region_event = OutboundEvent::Region {
