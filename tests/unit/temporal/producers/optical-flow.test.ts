@@ -153,3 +153,80 @@ describe('FlowProducer pHash gating', () => {
     await producer.stop();
   });
 });
+
+describe('FlowProducer ndjson parsing', () => {
+  let spawner: SidecarSpawner;
+  let spawned: StubChild[];
+
+  beforeEach(() => {
+    spawned = [];
+    spawner = vi.fn(() => {
+      const child = new StubChild();
+      spawned.push(child);
+      return child as never;
+    });
+  });
+
+  it('emits parsed events to listeners', async () => {
+    const events: unknown[] = [];
+    const producer = new FlowProducer({ binaryPath: '/fake', spawner });
+    producer.on('event', (evt) => events.push(evt));
+    await producer.start();
+    const child = spawned[0]!;
+    child.stdout.push(Buffer.from(
+      JSON.stringify({
+        type: 'optical-flow-region',
+        ts: 200,
+        frameTimestamp: 200,
+        regionId: 'r1',
+        bbox: { x: 0, y: 0, w: 10, h: 10 },
+        primitives: {
+          meanVelocity: { vx: 2, vy: 0 },
+          divergence: 0,
+          curl: 0,
+          speedVariance: 0,
+          pointCount: 50,
+        },
+      }) + '\n',
+    ));
+    child.stdout.push(null);
+    await new Promise((r) => setTimeout(r, 10));
+    expect(events.length).toBe(1);
+    expect((events[0] as { type: string }).type).toBe('optical-flow-region');
+    await producer.stop();
+  });
+
+  it('handles ndjson lines split across multiple chunks', async () => {
+    const events: unknown[] = [];
+    const producer = new FlowProducer({ binaryPath: '/fake', spawner });
+    producer.on('event', (evt) => events.push(evt));
+    await producer.start();
+    const child = spawned[0]!;
+    const json = JSON.stringify({
+      type: 'optical-flow-motion',
+      ts: 100,
+      regionId: 'r1',
+      pattern: 'translation',
+      params: { direction: { vx: 1, vy: 0 }, speedPxPerSec: 180 },
+      confidence: 0.9,
+    });
+    child.stdout.push(Buffer.from(json.slice(0, 20)));
+    child.stdout.push(Buffer.from(json.slice(20) + '\n'));
+    await new Promise((r) => setTimeout(r, 10));
+    expect(events.length).toBe(1);
+    await producer.stop();
+  });
+
+  it('drops malformed ndjson lines without crashing', async () => {
+    const events: unknown[] = [];
+    const producer = new FlowProducer({ binaryPath: '/fake', spawner });
+    producer.on('event', (evt) => events.push(evt));
+    await producer.start();
+    const child = spawned[0]!;
+    child.stdout.push(Buffer.from('not json at all\n'));
+    child.stdout.push(Buffer.from(JSON.stringify({ type: 'optical-flow-region', ts: 1, frameTimestamp: 1, regionId: 'r', bbox: { x: 0, y: 0, w: 1, h: 1 }, primitives: { meanVelocity: { vx: 0, vy: 0 }, divergence: 0, curl: 0, speedVariance: 0, pointCount: 1 } }) + '\n'));
+    await new Promise((r) => setTimeout(r, 10));
+    expect(events.length).toBe(1);
+    await producer.stop();
+  });
+});

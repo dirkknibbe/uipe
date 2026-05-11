@@ -43,6 +43,7 @@ export class FlowProducer extends EventEmitter {
   private lastAcceptedHash: bigint | null = null;
   private frameSource: FrameSource | null = null;
   private readonly keyframeListener: (kf: KeyframeLike) => void;
+  private stdoutBuffer = '';
   public framesAccepted = 0;
   public framesDropped = 0;
 
@@ -118,12 +119,30 @@ export class FlowProducer extends EventEmitter {
     log.info('spawning sidecar', { binaryPath: this.binaryPath });
     const child = this.spawner(this.binaryPath, []);
     this.child = child;
+    this.stdoutBuffer = '';
     child.once('exit', (code, signal) => this.onExit(code, signal));
+    child.stdout?.on('data', (chunk: Buffer) => this.onStdoutData(chunk));
     child.stderr?.on('data', (chunk: Buffer) => {
       for (const line of chunk.toString('utf8').split('\n')) {
         if (line.trim()) log.debug('sidecar stderr', { sidecar: line });
       }
     });
+  }
+
+  private onStdoutData(chunk: Buffer): void {
+    this.stdoutBuffer += chunk.toString('utf8');
+    let nl: number;
+    while ((nl = this.stdoutBuffer.indexOf('\n')) !== -1) {
+      const line = this.stdoutBuffer.slice(0, nl);
+      this.stdoutBuffer = this.stdoutBuffer.slice(nl + 1);
+      if (!line.trim()) continue;
+      try {
+        const parsed = JSON.parse(line);
+        this.emit('event', parsed);
+      } catch (err) {
+        log.warn('malformed ndjson from sidecar', { line, err: String(err) });
+      }
+    }
   }
 
   private onExit(code: number | null, signal: NodeJS.Signals | null): void {
