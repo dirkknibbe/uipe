@@ -1,3 +1,4 @@
+mod image_io;
 mod inference;
 
 fn main() {

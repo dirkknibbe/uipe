@@ -16,3 +16,4 @@ ort = { version = "2.0.0-rc.9", default-features = false, features = ["ndarray",
 ndarray = "0.16"
 anyhow = "1.0"
 thiserror = "1.0"
+image = { version = "0.25", default-features = false, features = ["png"] }
