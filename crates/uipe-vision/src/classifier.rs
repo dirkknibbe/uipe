@@ -35,7 +35,6 @@ const TRANSLATION_SPEED_MIN: f32 = 0.5;     // px/frame
 const STILLNESS_SPEED_MAX: f32 = 0.2;       // px/frame
 const SCALE_DIVERGENCE_MIN: f32 = 0.05;     // unitless from primitives
 const ROTATION_CURL_MIN: f32 = 0.05;
-const TRANSLATION_RATIO_OVER_NOISE: f32 = 2.0;
 
 /// Classify a single-frame primitive observation. Frame-rate is needed to scale
 /// per-frame velocities into per-second rates.
