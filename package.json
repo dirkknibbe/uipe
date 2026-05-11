@@ -21,6 +21,7 @@
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
     "lint": "eslint src tests --ext .ts",
+    "setup:flow-model": "pnpm exec tsx scripts/download-flow-model.ts",
     "start:dev": "bash scripts/start.sh",
     "prepublishOnly": "pnpm run build"
   },
