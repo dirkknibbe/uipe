@@ -3,7 +3,7 @@ use linfa::DatasetBase;
 use linfa::traits::Transformer;
 use linfa_clustering::Dbscan;
 // ndarray15 is ndarray 0.15, required to match linfa's ndarray version
-use ndarray15::{Array2, Axis};
+use ndarray15::Array2;
 
 #[derive(Debug, Clone)]
 pub struct Region {
@@ -156,7 +156,4 @@ mod tests {
         assert_eq!(regions.len(), 2, "expected two distinct regions");
     }
 
-    fn _suppress_axis_unused() {
-        let _ = Axis(0);
-    }
 }
