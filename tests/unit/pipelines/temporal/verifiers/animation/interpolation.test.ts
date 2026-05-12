@@ -34,10 +34,18 @@ describe('valueAtFinalState', () => {
     expect(result).toBeNull();
   });
 
-  it('returns null for direction:alternate', () => {
+  it('returns null for direction:alternate (with iterations=1, isolating the direction guard)', () => {
     const result = valueAtFinalState(
       kfFromTo({ translateX: 0 }, { translateX: 240 }),
-      { iterations: 2, direction: 'alternate' },
+      { iterations: 1, direction: 'alternate' },
+    );
+    expect(result).toBeNull();
+  });
+
+  it('returns null for direction:alternate-reverse (with iterations=1)', () => {
+    const result = valueAtFinalState(
+      kfFromTo({ translateX: 0 }, { translateX: 240 }),
+      { iterations: 1, direction: 'alternate-reverse' },
     );
     expect(result).toBeNull();
   });
