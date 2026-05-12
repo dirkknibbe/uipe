@@ -6,7 +6,6 @@ import type {
   SkipReason,
   SupportedProperty,
 } from '../../collectors/types.js';
-import type { ClockNormalizer } from '../../event-stream.js';
 import { computeDeviation } from './deviation.js';
 import { valueAtFinalState, type KeyframeTiming } from './interpolation.js';
 import { parseRawKeyframes } from './keyframes.js';
@@ -124,7 +123,6 @@ export class AnimationVerifier {
   async captureStart(
     cdp: CDPSession,
     params: { animation: { id: string; source?: { duration?: number } } },
-    _normalizer: ClockNormalizer,
   ): Promise<AnimationPredictionPayload> {
     const a = params.animation;
     const duration = a.source?.duration ?? 0;

@@ -63,7 +63,7 @@ export class AnimationCollector implements Collector {
         try {
           const cdp = this.cdp;
           if (cdp) {
-            const predPayload = await this.verifier.captureStart(cdp, params, normalizer);
+            const predPayload = await this.verifier.captureStart(cdp, params);
             // Race guard: if the animation was canceled while captureStart
             // awaited its CDP roundtrip, animationCanceled has already
             // cleared this.active[a.id] and pushed animation-end. Skip the

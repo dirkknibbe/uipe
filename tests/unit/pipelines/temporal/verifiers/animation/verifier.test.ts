@@ -2,12 +2,6 @@ import { describe, it, expect, vi } from 'vitest';
 import type { CDPSession } from 'playwright';
 import { AnimationVerifier } from '../../../../../../src/pipelines/temporal/verifiers/animation/verifier.js';
 
-const makeNormalizer = () => ({
-  fromWallTimeMs: (n: number) => n,
-  fromPerformanceNow: (n: number) => n,
-  fromCdpMonotonicSeconds: (n: number) => n * 1000,
-});
-
 function makeMockCdp(responses: Record<string, unknown> = {}) {
   return {
     send: vi.fn(async (method: string) => {
@@ -46,7 +40,7 @@ describe('AnimationVerifier.captureStart', () => {
       },
     });
     const v = new AnimationVerifier();
-    const payload = await v.captureStart(cdp, animStartParams(), makeNormalizer());
+    const payload = await v.captureStart(cdp, animStartParams());
 
     expect(payload.animationId).toBe('anim-1');
     expect(payload.predicted).toEqual([
@@ -62,7 +56,6 @@ describe('AnimationVerifier.captureStart', () => {
     const payload = await v.captureStart(
       cdp,
       animStartParams({ animation: { source: { duration: 0 } } }),
-      makeNormalizer(),
     );
     expect(payload.skipped?.reason).toBe('zero-duration');
     expect(payload.predicted).toEqual([]);
@@ -77,7 +70,7 @@ describe('AnimationVerifier.captureStart', () => {
       }),
     } as unknown as CDPSession;
     const v = new AnimationVerifier();
-    const payload = await v.captureStart(cdp, animStartParams(), makeNormalizer());
+    const payload = await v.captureStart(cdp, animStartParams());
     expect(payload.skipped?.reason).toBe('resolve-failed');
     expect(payload.predicted).toEqual([]);
     expect(payload.boundingBox).toBeNull();
@@ -93,7 +86,7 @@ describe('AnimationVerifier.captureStart', () => {
       },
     });
     const v = new AnimationVerifier();
-    const payload = await v.captureStart(cdp, animStartParams(), makeNormalizer());
+    const payload = await v.captureStart(cdp, animStartParams());
     expect(payload.skipped?.reason).toBe('no-target-node');
     expect(payload.boundingBox).toBeNull();
     expect(v.hasPending('anim-1')).toBe(false);
@@ -116,7 +109,7 @@ describe('AnimationVerifier.captureStart', () => {
       },
     });
     const v = new AnimationVerifier();
-    const payload = await v.captureStart(cdp, animStartParams(), makeNormalizer());
+    const payload = await v.captureStart(cdp, animStartParams());
     expect(payload.skipped?.reason).toBe('unsupported-timing');
     expect(payload.predicted).toEqual([]);
   });
@@ -138,7 +131,7 @@ describe('AnimationVerifier.captureStart', () => {
       },
     });
     const v = new AnimationVerifier();
-    const payload = await v.captureStart(cdp, animStartParams(), makeNormalizer());
+    const payload = await v.captureStart(cdp, animStartParams());
     expect(payload.skipped?.reason).toBe('unsupported-only');
     expect(payload.unsupportedProperties).toContain('backgroundColor');
   });
@@ -160,7 +153,7 @@ describe('AnimationVerifier.captureStart', () => {
       },
     });
     const v = new AnimationVerifier();
-    const payload = await v.captureStart(cdp, animStartParams(), makeNormalizer());
+    const payload = await v.captureStart(cdp, animStartParams());
     expect(payload.skipped).toBeUndefined();
     expect(payload.predicted).toEqual([{ property: 'translateX', endValue: 100, unit: 'px' }]);
     expect(payload.unsupportedProperties).toContain('backgroundColor');
@@ -183,7 +176,7 @@ describe('AnimationVerifier.captureStart', () => {
       },
     });
     const v = new AnimationVerifier();
-    await v.captureStart(cdp, animStartParams(), makeNormalizer());
+    await v.captureStart(cdp, animStartParams());
     expect(v.hasPending('anim-1')).toBe(true);
   });
 
@@ -193,7 +186,6 @@ describe('AnimationVerifier.captureStart', () => {
     await v.captureStart(
       cdp,
       animStartParams({ animation: { source: { duration: 0 } } }),
-      makeNormalizer(),
     );
     expect(v.hasPending('anim-1')).toBe(false);
   });
@@ -219,7 +211,7 @@ describe('AnimationVerifier.observe', () => {
   it('returns deviation when both prediction and observation succeed', async () => {
     const cdp = makeMockCdp(makeOkStartResponses());
     const v = new AnimationVerifier();
-    await v.captureStart(cdp, animStartParams(), makeNormalizer());
+    await v.captureStart(cdp, animStartParams());
 
     (cdp.send as any).mockImplementationOnce(async (method: string) => {
       if (method === 'Runtime.callFunctionOn') {
@@ -237,7 +229,7 @@ describe('AnimationVerifier.observe', () => {
   it('returns null and drops state when observation throws', async () => {
     const cdp = makeMockCdp(makeOkStartResponses());
     const v = new AnimationVerifier();
-    await v.captureStart(cdp, animStartParams(), makeNormalizer());
+    await v.captureStart(cdp, animStartParams());
 
     (cdp.send as any).mockImplementationOnce(async (method: string) => {
       if (method === 'Runtime.callFunctionOn') throw new Error('detached');
@@ -275,7 +267,7 @@ describe('AnimationVerifier.discard', () => {
       },
     });
     const v = new AnimationVerifier();
-    await v.captureStart(cdp, animStartParams(), makeNormalizer());
+    await v.captureStart(cdp, animStartParams());
     expect(v.hasPending('anim-1')).toBe(true);
     v.discard('anim-1');
     expect(v.hasPending('anim-1')).toBe(false);
@@ -300,11 +292,10 @@ describe('AnimationVerifier.clear', () => {
       },
     });
     const v = new AnimationVerifier();
-    await v.captureStart(cdp, animStartParams(), makeNormalizer());
+    await v.captureStart(cdp, animStartParams());
     await v.captureStart(
       cdp,
       animStartParams({ animation: { id: 'anim-2' } }),
-      makeNormalizer(),
     );
     expect(v.hasPending('anim-1')).toBe(true);
     expect(v.hasPending('anim-2')).toBe(true);
