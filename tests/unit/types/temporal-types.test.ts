@@ -3,10 +3,6 @@ import type { StateTransition, TransitionType, KeyframeEvent, SceneGraphDiff } f
 import type {
   AnimationPredictionPayload,
   AnimationEndPayload,
-  SupportedProperty,
-  PropertyPrediction,
-  PropertyUnit,
-  SkipReason,
   TimelineEvent,
 } from '../../../src/pipelines/temporal/collectors/types.js';
 
