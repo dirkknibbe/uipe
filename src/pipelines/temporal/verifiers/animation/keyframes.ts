@@ -7,18 +7,17 @@ export interface ParsedKeyframes {
 
 const SUPPORTED_DIRECT_PROPS = ['opacity', 'width', 'height', 'top', 'left', 'right', 'bottom'] as const;
 
+// WAAPI-level keys on a keyframe object that aren't CSS properties.
 const META_KEYS = new Set(['offset', 'easing', 'composite']);
 
-const KNOWN_UNSUPPORTED = new Set([
-  'backgroundColor', 'background-color',
-  'color',
-  'filter', 'backdropFilter',
-  'clipPath', 'clip-path',
-  'mask', 'maskImage',
-  'boxShadow', 'textShadow',
-  'borderRadius',
-  'fill', 'stroke',
-]);
+// Tier-3 properties the v1 verifier does NOT predict — kept here as a list of
+// names we've explicitly considered. The parser routes ANY unknown property
+// (whether on this list or not) into `unsupportedProperties`, so this set is
+// documentation, not control flow. Future Tier-3 work will move them out of
+// this set and into a real handler.
+//
+// Listed for documentation: backgroundColor, color, filter, backdropFilter,
+// clipPath, mask, maskImage, boxShadow, textShadow, borderRadius, fill, stroke.
 
 interface RawKeyframe {
   offset: number;
