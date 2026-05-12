@@ -34,9 +34,16 @@ describe('AnimationVerifier — Playwright integration', () => {
   });
 
   afterEach(async () => {
-    await collector?.detach();
+    // stream.detach() unsubscribes the framenavigated handler AND calls
+    // collector.detach() on each registered collector — so calling both
+    // would be a double-detach. Use stream.detach() as the single entry.
+    await stream?.detach();
     await context?.close();
   });
+
+  // The 400ms wait covers a 200ms animation + 16ms verifier setTimeout slack
+  // + ~observation roundtrip. Don't drop this below ~300ms or the
+  // animation-end event may not be on the stream when we query.
 
   it('predicts and verifies a translateX animation', async () => {
     await page.evaluate(() => {
@@ -95,6 +102,9 @@ describe('AnimationVerifier — Playwright integration', () => {
     const events = stream.getEvents();
     const prediction = events.find((e) => e.type === 'animation-prediction');
     const end = events.find((e) => e.type === 'animation-end');
+
+    expect(prediction).toBeDefined();
+    expect(end).toBeDefined();
 
     const pred = prediction!.payload as any;
     expect(pred.skipped?.reason).toBe('unsupported-only');
