@@ -8,6 +8,7 @@ export type EventType =
   | 'network-response'
   | 'animation-start'
   | 'animation-end'
+  | 'animation-prediction'
   | 'phash-change'
   | 'optical-flow-raw'
   | 'optical-flow-region'
@@ -47,9 +48,54 @@ export interface AnimationStartPayload {
   target?: string;
 }
 
+export type SupportedProperty =
+  | 'translateX' | 'translateY' | 'scale' | 'rotate'
+  | 'opacity'
+  | 'width' | 'height'
+  | 'top' | 'left' | 'right' | 'bottom';
+
+export type PropertyUnit = 'px' | 'rad' | 'ratio' | 'scalar';
+
+export interface PropertyPrediction {
+  property: SupportedProperty;
+  endValue: number;
+  unit: PropertyUnit;
+}
+
+export type SkipReason =
+  | 'no-keyframes'
+  | 'unsupported-only'
+  | 'unsupported-timing'
+  | 'zero-duration'
+  | 'resolve-failed'
+  | 'no-target-node';
+
+export interface AnimationPredictionPayload {
+  animationId: string;
+  expectedEndTimestamp: number;
+  boundingBox: { x: number; y: number; w: number; h: number } | null;
+  predicted: PropertyPrediction[];
+  unsupportedProperties?: string[];
+  skipped?: { reason: SkipReason };
+}
+
+export interface PerPropertyDeviation {
+  property: SupportedProperty;
+  predicted: number;
+  observed: number;
+  delta: number;
+  normalizedDelta: number;
+}
+
+export interface AnimationDeviation {
+  perProperty: PerPropertyDeviation[];
+  score: number;
+}
+
 export interface AnimationEndPayload {
   animationId: string;
   reason: 'completed' | 'canceled';
+  deviation?: AnimationDeviation;
 }
 
 export interface PHashChangePayload {
@@ -100,6 +146,7 @@ export type PayloadFor<T extends EventType> =
   T extends 'network-response'  ? NetworkResponsePayload :
   T extends 'animation-start'   ? AnimationStartPayload :
   T extends 'animation-end'     ? AnimationEndPayload :
+  T extends 'animation-prediction' ? AnimationPredictionPayload :
   T extends 'phash-change'      ? PHashChangePayload :
   T extends 'optical-flow-raw'    ? OpticalFlowRawPayload :
   T extends 'optical-flow-region' ? OpticalFlowRegionPayload :
