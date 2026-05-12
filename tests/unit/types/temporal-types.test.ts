@@ -3,6 +3,10 @@ import type { StateTransition, TransitionType, KeyframeEvent, SceneGraphDiff } f
 import type {
   AnimationPredictionPayload,
   AnimationEndPayload,
+  SupportedProperty,
+  PropertyPrediction,
+  PropertyUnit,
+  SkipReason,
   TimelineEvent,
 } from '../../../src/pipelines/temporal/collectors/types.js';
 
@@ -65,25 +69,30 @@ describe('Temporal types', () => {
 
 describe('AnimationPredictionPayload', () => {
   it('accepts a complete prediction shape', () => {
+    // Typed intermediates guard against accidental widening of the leaf types
+    // — if SupportedProperty / PropertyUnit / PropertyPrediction were widened
+    // to string, these would compile but the field types in the union would
+    // catch the regression.
+    const prop: SupportedProperty = 'translateX';
+    const unit: PropertyUnit = 'px';
+    const pred: PropertyPrediction = { property: prop, endValue: 240, unit };
     const payload: AnimationPredictionPayload = {
       animationId: 'a-1',
       expectedEndTimestamp: 1234,
       boundingBox: { x: 10, y: 20, w: 100, h: 50 },
-      predicted: [
-        { property: 'translateX', endValue: 240, unit: 'px' },
-        { property: 'opacity', endValue: 1, unit: 'scalar' },
-      ],
+      predicted: [pred, { property: 'opacity', endValue: 1, unit: 'scalar' }],
     };
     expect(payload.predicted).toHaveLength(2);
   });
 
   it('accepts a skipped prediction with empty predicted array', () => {
+    const reason: SkipReason = 'unsupported-timing';
     const payload: AnimationPredictionPayload = {
       animationId: 'a-2',
       expectedEndTimestamp: 1234,
       boundingBox: null,
       predicted: [],
-      skipped: { reason: 'unsupported-timing' },
+      skipped: { reason },
     };
     expect(payload.skipped?.reason).toBe('unsupported-timing');
   });
