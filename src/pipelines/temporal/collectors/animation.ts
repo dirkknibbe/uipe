@@ -57,16 +57,27 @@ export class AnimationCollector implements Collector {
         });
 
         // Predict + emit prediction event.
+        // Outer try/catch guards against unexpected programmer errors in the
+        // verifier itself — the verifier already returns skipped payloads for
+        // all expected CDP failure modes, so this catch is defense in depth.
         try {
           const cdp = this.cdp;
           if (cdp) {
             const predPayload = await this.verifier.captureStart(cdp, params, normalizer);
-            stream.push({
-              id: `anim-pred-${++nextId}`,
-              type: 'animation-prediction',
-              timestamp: startTimestamp,
-              payload: { ...predPayload, expectedEndTimestamp: startTimestamp + duration },
-            });
+            // Race guard: if the animation was canceled while captureStart
+            // awaited its CDP roundtrip, animationCanceled has already
+            // cleared this.active[a.id] and pushed animation-end. Skip the
+            // prediction emit to keep the timeline's terminal-event invariant.
+            if (this.active.has(a.id)) {
+              stream.push({
+                id: `anim-pred-${++nextId}`,
+                type: 'animation-prediction',
+                timestamp: startTimestamp,
+                payload: { ...predPayload, expectedEndTimestamp: startTimestamp + duration },
+              });
+            } else {
+              this.verifier.discard(a.id);
+            }
           }
         } catch (err) {
           console.warn(`AnimationCollector: prediction failed (${(err as Error).message})`);
