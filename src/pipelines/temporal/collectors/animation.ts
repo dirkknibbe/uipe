@@ -1,6 +1,7 @@
 import type { Page, CDPSession } from 'playwright';
 import type { Collector } from './types.js';
 import type { TemporalEventStream } from '../event-stream.js';
+import { AnimationVerifier } from '../verifiers/animation/verifier.js';
 
 let nextId = 0;
 
@@ -15,6 +16,7 @@ export class AnimationCollector implements Collector {
   readonly name = 'animation';
   private cdp: CDPSession | undefined;
   private active = new Map<string, AnimationStartState>();
+  private verifier = new AnimationVerifier();
 
   async attach(page: Page, stream: TemporalEventStream): Promise<void> {
     const normalizer = stream.getNormalizer();
@@ -27,7 +29,7 @@ export class AnimationCollector implements Collector {
       this.cdp = await page.context().newCDPSession(page);
       await this.cdp.send('Animation.enable');
 
-      this.cdp.on('Animation.animationStarted', (params: any) => {
+      this.cdp.on('Animation.animationStarted', async (params: any) => {
         const a = params.animation;
         const startTimestamp = a.startTime !== undefined
           ? normalizer.fromCdpMonotonicSeconds(a.startTime)
@@ -54,15 +56,40 @@ export class AnimationCollector implements Collector {
           },
         });
 
+        // Predict + emit prediction event.
+        try {
+          const cdp = this.cdp;
+          if (cdp) {
+            const predPayload = await this.verifier.captureStart(cdp, params, normalizer);
+            stream.push({
+              id: `anim-pred-${++nextId}`,
+              type: 'animation-prediction',
+              timestamp: startTimestamp,
+              payload: { ...predPayload, expectedEndTimestamp: startTimestamp + duration },
+            });
+          }
+        } catch (err) {
+          console.warn(`AnimationCollector: prediction failed (${(err as Error).message})`);
+        }
+
         if (duration > 0) {
-          state.completionTimer = setTimeout(() => {
-            // Predicted endpoint based on the start's normalized timestamp.
-            // This avoids mixing host-side and page-side clocks.
+          state.completionTimer = setTimeout(async () => {
+            let deviation = null;
+            try {
+              const cdp = this.cdp;
+              if (cdp) {
+                deviation = await this.verifier.observe(cdp, a.id);
+              }
+            } catch (err) {
+              console.warn(`AnimationCollector: observation failed (${(err as Error).message})`);
+            }
             stream.push({
               id: `anim-end-${++nextId}`,
               type: 'animation-end',
               timestamp: startTimestamp + duration,
-              payload: { animationId: a.id, reason: 'completed' },
+              payload: deviation
+                ? { animationId: a.id, reason: 'completed', deviation }
+                : { animationId: a.id, reason: 'completed' },
             });
             this.active.delete(a.id);
           }, duration + 16);
@@ -79,9 +106,10 @@ export class AnimationCollector implements Collector {
           timestamp = state.startTimestamp + elapsed;
           this.active.delete(id);
         } else {
-          // No matching start tracked — fall back to wall-clock-derived.
           timestamp = normalizer.fromWallTimeMs(Date.now());
         }
+
+        this.verifier.discard(id);
 
         stream.push({
           id: `anim-end-${++nextId}`,
@@ -103,6 +131,7 @@ export class AnimationCollector implements Collector {
       if (state.completionTimer) clearTimeout(state.completionTimer);
     }
     this.active.clear();
+    this.verifier.clear();
     if (this.cdp) {
       try { await this.cdp.detach(); } catch { /* ignore */ }
       this.cdp = undefined;

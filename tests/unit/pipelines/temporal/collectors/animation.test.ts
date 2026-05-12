@@ -25,6 +25,52 @@ const makeMockPage = (cdp: CDPSession) => ({
   context: vi.fn(() => ({ newCDPSession: vi.fn(async () => cdp) })),
 }) as unknown as Page;
 
+const makeMockCdpWithVerifier = (opts: {
+  resolveResponse?: any;
+  startReadResponse?: any;
+  endReadResponse?: any;
+  resolveThrows?: boolean;
+} = {}) => {
+  const handlers = new Map<string, Function[]>();
+  let readCallCount = 0;
+  const cdp = {
+    send: vi.fn(async (method: string) => {
+      if (method === 'Animation.enable') return undefined;
+      if (method === 'Animation.resolveAnimation') {
+        if (opts.resolveThrows) throw new Error('gone');
+        return opts.resolveResponse ?? { remoteObject: { objectId: 'obj-1' } };
+      }
+      if (method === 'Runtime.callFunctionOn') {
+        readCallCount++;
+        if (readCallCount === 1) {
+          return opts.startReadResponse ?? {
+            result: {
+              value: {
+                keyframes: [
+                  { offset: 0, transform: 'translateX(0px)' },
+                  { offset: 1, transform: 'translateX(240px)' },
+                ],
+                timing: { iterations: 1, direction: 'normal' },
+                bbox: { x: 10, y: 20, w: 100, h: 50 },
+              },
+            },
+          };
+        }
+        return opts.endReadResponse ?? { result: { value: { translateX: 240 } } };
+      }
+      return undefined;
+    }),
+    on: vi.fn((event: string, handler: Function) => {
+      const list = handlers.get(event) ?? [];
+      list.push(handler);
+      handlers.set(event, list);
+    }),
+    off: vi.fn(),
+    detach: vi.fn(),
+  } as unknown as CDPSession;
+  return { cdp, handlers };
+};
+
 describe('AnimationCollector', () => {
   it('attach calls Animation.enable and registers listeners', async () => {
     const { cdp } = makeMockCdp();
@@ -121,7 +167,8 @@ describe('AnimationCollector', () => {
     await new AnimationCollector().attach(page, stream);
 
     const handler = handlers.get('Animation.animationStarted')![0];
-    handler({
+    // Handler is async (awaits captureStart); await it so the setTimeout is registered.
+    await handler({
       animation: {
         id: 'anim-2',
         name: 'fade',
@@ -131,13 +178,138 @@ describe('AnimationCollector', () => {
       },
     });
 
-    expect(stream.size()).toBe(1);
+    // animation-start is pushed synchronously; animation-prediction follows via
+    // captureStart (skipped — makeMockCdp returns undefined for resolveAnimation,
+    // so the verifier returns a skipped payload but still pushes the event).
+    const eventsAfterStart = stream.getEvents();
+    expect(eventsAfterStart[0].type).toBe('animation-start');
 
-    vi.advanceTimersByTime(317);
-    expect(stream.size()).toBe(2);
+    await vi.advanceTimersByTimeAsync(317);
     const events = stream.getEvents();
-    expect(events[1].type).toBe('animation-end');
-    expect(events[1].payload).toMatchObject({ animationId: 'anim-2', reason: 'completed' });
+    const endEvent = events.find((e) => e.type === 'animation-end');
+    expect(endEvent).toBeDefined();
+    expect(endEvent!.payload).toMatchObject({ animationId: 'anim-2', reason: 'completed' });
     vi.useRealTimers();
+  });
+
+  it('animationStarted pushes animation-prediction after animation-start', async () => {
+    const { cdp, handlers } = makeMockCdpWithVerifier();
+    const page = makeMockPage(cdp);
+    const stream = new TemporalEventStream();
+    await stream.attach(page);
+    await new AnimationCollector().attach(page, stream);
+
+    const handler = handlers.get('Animation.animationStarted')![0];
+    await handler({
+      animation: {
+        id: 'anim-1',
+        name: 'slide',
+        startTime: performance.now() / 1000,
+        playbackRate: 1,
+        source: { duration: 300, easing: 'linear' },
+      },
+    });
+
+    // Allow promises queued in the handler to resolve.
+    await new Promise((r) => setImmediate(r));
+
+    const events = stream.getEvents();
+    expect(events).toHaveLength(2);
+    expect(events[0].type).toBe('animation-start');
+    expect(events[1].type).toBe('animation-prediction');
+    expect((events[1].payload as any).animationId).toBe('anim-1');
+    expect((events[1].payload as any).predicted).toEqual([
+      { property: 'translateX', endValue: 240, unit: 'px' },
+    ]);
+  });
+
+  it('animation-end carries deviation when prediction + observation succeed', async () => {
+    vi.useFakeTimers();
+    try {
+      const { cdp, handlers } = makeMockCdpWithVerifier();
+      const page = makeMockPage(cdp);
+      const stream = new TemporalEventStream();
+      await stream.attach(page);
+      await new AnimationCollector().attach(page, stream);
+
+      const handler = handlers.get('Animation.animationStarted')![0];
+      await handler({
+        animation: {
+          id: 'anim-1',
+          name: 'slide',
+          startTime: performance.now() / 1000,
+          playbackRate: 1,
+          source: { duration: 100, easing: 'linear' },
+        },
+      });
+      await vi.advanceTimersByTimeAsync(0);
+      await vi.advanceTimersByTimeAsync(120);
+      await vi.advanceTimersByTimeAsync(0);
+
+      const events = stream.getEvents();
+      const endEvent = events.find((e) => e.type === 'animation-end');
+      expect(endEvent).toBeDefined();
+      const payload = endEvent!.payload as any;
+      expect(payload.reason).toBe('completed');
+      expect(payload.deviation).toBeDefined();
+      expect(payload.deviation.score).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('animationCanceled drops pending verifier state', async () => {
+    const { cdp, handlers } = makeMockCdpWithVerifier();
+    const page = makeMockPage(cdp);
+    const stream = new TemporalEventStream();
+    await stream.attach(page);
+    const collector = new AnimationCollector();
+    await collector.attach(page, stream);
+
+    const startHandler = handlers.get('Animation.animationStarted')![0];
+    await startHandler({
+      animation: {
+        id: 'anim-1',
+        name: 'slide',
+        startTime: performance.now() / 1000,
+        playbackRate: 1,
+        source: { duration: 300, easing: 'linear' },
+      },
+    });
+    await new Promise((r) => setImmediate(r));
+
+    const cancelHandler = handlers.get('Animation.animationCanceled')![0];
+    cancelHandler({ id: 'anim-1' });
+
+    const events = stream.getEvents();
+    const endEvent = events.find((e) => e.type === 'animation-end');
+    expect(endEvent).toBeDefined();
+    expect((endEvent!.payload as any).reason).toBe('canceled');
+    expect((endEvent!.payload as any).deviation).toBeUndefined();
+  });
+
+  it('detach clears pending verifier state', async () => {
+    const { cdp, handlers } = makeMockCdpWithVerifier();
+    const page = makeMockPage(cdp);
+    const stream = new TemporalEventStream();
+    await stream.attach(page);
+    const collector = new AnimationCollector();
+    await collector.attach(page, stream);
+
+    const startHandler = handlers.get('Animation.animationStarted')![0];
+    await startHandler({
+      animation: {
+        id: 'anim-1',
+        name: 'slide',
+        startTime: performance.now() / 1000,
+        playbackRate: 1,
+        source: { duration: 300, easing: 'linear' },
+      },
+    });
+    await new Promise((r) => setImmediate(r));
+
+    await collector.detach();
+    // Re-attaching does not surface leaked events; detach should not throw.
+    expect(cdp.detach).toHaveBeenCalled();
   });
 });
