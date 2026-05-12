@@ -7,7 +7,7 @@ describe('SCALE constants', () => {
     expect(SCALE.translateX).toBe(50);
     expect(SCALE.translateY).toBe(50);
     expect(SCALE.scale).toBe(0.25);
-    expect(SCALE.rotate).toBeCloseTo(0.5, 5);
+    expect(SCALE.rotate).toBe(0.5);
     expect(SCALE.opacity).toBe(0.2);
     expect(SCALE.width).toBe(50);
     expect(SCALE.height).toBe(50);
@@ -48,9 +48,19 @@ describe('computeDeviation', () => {
     expect(tx.normalizedDelta).toBeCloseTo(50 / 50, 5);
   });
 
-  it('clamps normalizedDelta to [0, 1]', () => {
+  it('clamps normalizedDelta to [0, 1] while preserving raw delta', () => {
     const dev = computeDeviation(predicted, { translateX: 10000, opacity: 1 });
     const tx = dev.perProperty.find((p) => p.property === 'translateX')!;
+    expect(tx.normalizedDelta).toBe(1);
+    // Raw delta is the signed, unclamped overshoot — callers rely on this
+    // to recover the actual magnitude when normalizedDelta saturates at 1.
+    expect(tx.delta).toBe(9900);
+  });
+
+  it('hits exactly 1.0 normalizedDelta when |delta| === SCALE (boundary)', () => {
+    const dev = computeDeviation(predicted, { translateX: 150, opacity: 1 });
+    const tx = dev.perProperty.find((p) => p.property === 'translateX')!;
+    expect(tx.delta).toBe(50);
     expect(tx.normalizedDelta).toBe(1);
   });
 

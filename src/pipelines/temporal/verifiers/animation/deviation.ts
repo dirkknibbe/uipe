@@ -40,6 +40,6 @@ export function computeDeviation(
       normalizedDelta,
     });
   }
-  const score = perProperty.length === 0 ? 0 : Math.max(...perProperty.map((p) => p.normalizedDelta));
+  const score = perProperty.reduce((m, p) => Math.max(m, p.normalizedDelta), 0);
   return { perProperty, score };
 }
