@@ -81,6 +81,8 @@ describe('AnimationVerifier.captureStart', () => {
     expect(payload.skipped?.reason).toBe('resolve-failed');
     expect(payload.predicted).toEqual([]);
     expect(payload.boundingBox).toBeNull();
+    // Pending Map must stay empty on skip — orchestrator invariant.
+    expect(v.hasPending('anim-1')).toBe(false);
   });
 
   it('emits skipped:no-target-node when callFunctionOn returns no bbox', async () => {
@@ -94,6 +96,7 @@ describe('AnimationVerifier.captureStart', () => {
     const payload = await v.captureStart(cdp, animStartParams(), makeNormalizer());
     expect(payload.skipped?.reason).toBe('no-target-node');
     expect(payload.boundingBox).toBeNull();
+    expect(v.hasPending('anim-1')).toBe(false);
   });
 
   it('emits skipped:unsupported-timing for iterations !== 1', async () => {

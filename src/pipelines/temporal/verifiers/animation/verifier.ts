@@ -58,6 +58,12 @@ const READ_AT_END_SCRIPT = `
     const tf = cs.transform;
     const out = {};
 
+    // matrix(a,b,c,d,e,f): e=v[4]=tx, f=v[5]=ty. scale=sqrt(a^2+b^2),
+    // rotate=atan2(b,a). matrix3d is column-major 4x4: tx=v[12]=m41,
+    // ty=v[13]=m42. atan2 returns radians in [-pi, pi] — for
+    // single-iteration animations under one full turn this matches the
+    // predicted rotate (also radians). Multi-turn rotates wrap and
+    // would yield large deviation; v1 skips those via unsupported-timing.
     if (tf && tf !== 'none') {
       const m = tf.match(/^matrix\\(([^)]+)\\)$/);
       if (m) {
@@ -122,6 +128,11 @@ export class AnimationVerifier {
   ): Promise<AnimationPredictionPayload> {
     const a = params.animation;
     const duration = a.source?.duration ?? 0;
+    // expectedEndTimestamp here is a millisecond OFFSET (== duration).
+    // The collector (Task 6) overwrites this to an absolute timeline
+    // timestamp (startTimestamp + duration) at push time. The verifier
+    // doesn't have access to startTimestamp, so it carries the offset
+    // and lets the collector apply the anchor.
     const expectedEndTimestamp = duration;
 
     if (duration === 0) {
