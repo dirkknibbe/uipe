@@ -49,6 +49,10 @@ export function parseRawKeyframes(raw: RawKeyframe[]): ParsedKeyframes {
 
     for (const key of Object.keys(kf)) {
       if (META_KEYS.has(key)) continue;
+      // `transform` is intentionally excluded from the unsupported list: the
+      // string is parsed into components by parseTransform(). If the string
+      // is 'none' or a matrix() we don't decompose, the components are
+      // simply absent from `properties` — never marked unsupported.
       if (key === 'transform') continue;
       if ((SUPPORTED_DIRECT_PROPS as readonly string[]).includes(key)) continue;
       // Anything else is unsupported — known Tier-3 explicitly or unknown.

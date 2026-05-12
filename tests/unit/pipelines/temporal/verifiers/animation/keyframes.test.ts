@@ -97,6 +97,26 @@ describe('parseRawKeyframes', () => {
     expect(result.keyframes[1].properties).toEqual({});
   });
 
+  it('handles negative translateX (slide-out direction)', () => {
+    const result = parseRawKeyframes([
+      { offset: 0, transform: 'translateX(0px)' },
+      { offset: 1, transform: 'translateX(-50px)' },
+    ]);
+    expect(result.keyframes[1].properties).toEqual({ translateX: -50 });
+    expect(result.unsupportedProperties).toEqual([]);
+  });
+
+  it("treats transform:'none' as an empty component set (no error, no unsupported flag)", () => {
+    const result = parseRawKeyframes([
+      { offset: 0, transform: 'translateX(0px)' },
+      { offset: 1, transform: 'none' },
+    ]);
+    // 'none' contains no recognized transform functions -> empty properties map.
+    expect(result.keyframes[1].properties).toEqual({});
+    // 'transform' key is never added to unsupported, even when it parses to nothing.
+    expect(result.unsupportedProperties).toEqual([]);
+  });
+
   it('preserves the input offset values', () => {
     const result = parseRawKeyframes([
       { offset: 0, transform: 'translateX(0px)' },
