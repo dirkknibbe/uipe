@@ -1,5 +1,14 @@
 import { describe, it, expect } from 'vitest';
 import type { StateTransition, TransitionType, KeyframeEvent, SceneGraphDiff } from '../../../src/types/index.js';
+import type {
+  AnimationPredictionPayload,
+  AnimationEndPayload,
+  SupportedProperty,
+  PropertyPrediction,
+  PropertyUnit,
+  SkipReason,
+  TimelineEvent,
+} from '../../../src/pipelines/temporal/collectors/types.js';
 
 describe('Temporal types', () => {
   const emptyDiff: SceneGraphDiff = { added: [], removed: [], modified: [], stable: [] };
@@ -55,5 +64,95 @@ describe('Temporal types', () => {
     // Existing types still work
     const existingTypes: TransitionType[] = ['navigation', 'modal_open', 'modal_close', 'content_loaded', 'animation'];
     expect(existingTypes).toHaveLength(5);
+  });
+});
+
+describe('AnimationPredictionPayload', () => {
+  it('accepts a complete prediction shape', () => {
+    // Typed intermediates guard against accidental widening of the leaf types
+    // — if SupportedProperty / PropertyUnit / PropertyPrediction were widened
+    // to string, these would compile but the field types in the union would
+    // catch the regression.
+    const prop: SupportedProperty = 'translateX';
+    const unit: PropertyUnit = 'px';
+    const pred: PropertyPrediction = { property: prop, endValue: 240, unit };
+    const payload: AnimationPredictionPayload = {
+      animationId: 'a-1',
+      expectedEndTimestamp: 1234,
+      boundingBox: { x: 10, y: 20, w: 100, h: 50 },
+      predicted: [pred, { property: 'opacity', endValue: 1, unit: 'scalar' }],
+    };
+    expect(payload.predicted).toHaveLength(2);
+  });
+
+  it('accepts a skipped prediction with empty predicted array', () => {
+    const reason: SkipReason = 'unsupported-timing';
+    const payload: AnimationPredictionPayload = {
+      animationId: 'a-2',
+      expectedEndTimestamp: 1234,
+      boundingBox: null,
+      predicted: [],
+      skipped: { reason },
+    };
+    expect(payload.skipped?.reason).toBe('unsupported-timing');
+  });
+
+  it('accepts unsupportedProperties listing Tier-3 props', () => {
+    const payload: AnimationPredictionPayload = {
+      animationId: 'a-3',
+      expectedEndTimestamp: 1234,
+      boundingBox: { x: 0, y: 0, w: 10, h: 10 },
+      predicted: [{ property: 'translateX', endValue: 100, unit: 'px' }],
+      unsupportedProperties: ['background-color', 'filter'],
+    };
+    expect(payload.unsupportedProperties).toContain('background-color');
+  });
+});
+
+describe('Extended AnimationEndPayload', () => {
+  it('accepts an end event with deviation', () => {
+    const payload: AnimationEndPayload = {
+      animationId: 'a-1',
+      reason: 'completed',
+      deviation: {
+        perProperty: [{
+          property: 'translateX',
+          predicted: 100,
+          observed: 102,
+          delta: 2,
+          normalizedDelta: 0.04,
+        }],
+        score: 0.04,
+      },
+    };
+    expect(payload.deviation?.score).toBe(0.04);
+  });
+
+  it('accepts an end event without deviation', () => {
+    const payload: AnimationEndPayload = { animationId: 'a-1', reason: 'completed' };
+    expect(payload.deviation).toBeUndefined();
+  });
+
+  it('accepts a canceled end event without deviation', () => {
+    const payload: AnimationEndPayload = { animationId: 'a-1', reason: 'canceled' };
+    expect(payload.reason).toBe('canceled');
+  });
+});
+
+describe('animation-prediction TimelineEvent', () => {
+  it('typechecks with PayloadFor mapping', () => {
+    const event: TimelineEvent<'animation-prediction'> = {
+      id: 'evt-1',
+      type: 'animation-prediction',
+      timestamp: 0,
+      payload: {
+        animationId: 'a-1',
+        expectedEndTimestamp: 300,
+        boundingBox: null,
+        predicted: [],
+        skipped: { reason: 'no-keyframes' },
+      },
+    };
+    expect(event.type).toBe('animation-prediction');
   });
 });

@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html>
+<head>
+<style>
+  body { margin: 0; padding: 20px; font-family: sans-serif; }
+  .box {
+    width: 100px;
+    height: 100px;
+    background: #4a90e2;
+    position: relative;
+  }
+  .slide.running {
+    animation: slide-anim 200ms linear forwards;
+  }
+  @keyframes slide-anim {
+    from { transform: translateX(0px); }
+    to   { transform: translateX(200px); }
+  }
+  .fade.running {
+    animation: fade-anim 200ms linear forwards;
+  }
+  @keyframes fade-anim {
+    from { opacity: 0; }
+    to   { opacity: 1; }
+  }
+  .bg.running {
+    animation: bg-anim 200ms linear forwards;
+  }
+  @keyframes bg-anim {
+    from { background-color: red; }
+    to   { background-color: green; }
+  }
+  .spinner.running {
+    animation: spin 1s linear infinite;
+  }
+  @keyframes spin {
+    from { transform: rotate(0deg); }
+    to   { transform: rotate(360deg); }
+  }
+</style>
+</head>
+<body>
+  <div id="slide" class="box slide"></div>
+  <div id="fade" class="box fade"></div>
+  <div id="bg" class="box bg"></div>
+  <div id="spinner" class="box spinner"></div>
+</body>
+</html>
