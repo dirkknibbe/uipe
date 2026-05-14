@@ -47,6 +47,11 @@ export interface SceneNode {
   visualConfidence: number;
   structuralConfidence: number;
   fusionMethod: FusionMethod;
+
+  // Component classification (sub-project #4)
+  component?:
+    | { name: string; source: 'rules' | 'vlm' | 'storybook'; signature: string }
+    | { name: null; status: 'pending'; signature: string };
 }
 
 export interface SceneGraph {
