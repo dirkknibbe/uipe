@@ -5,8 +5,8 @@ import { makeGetTimelineTool } from '../../../src/mcp/tools/get-timeline.js';
 import type { InputPayload, MutationPayload } from '../../../src/pipelines/temporal/collectors/types.js';
 
 describe('MCP Tools', () => {
-  it('TOOL_NAMES has exactly 13 entries', () => {
-    expect(TOOL_NAMES).toHaveLength(13);
+  it('TOOL_NAMES has exactly 14 entries', () => {
+    expect(TOOL_NAMES).toHaveLength(14);
   });
 
   it('contains all 7 original tools', () => {
@@ -41,6 +41,10 @@ describe('MCP Tools', () => {
 
   it('contains get_timeline tool', () => {
     expect(TOOL_NAMES).toContain('get_timeline');
+  });
+
+  it('contains get_component_index tool', () => {
+    expect(TOOL_NAMES).toContain('get_component_index');
   });
 });
 
