@@ -4,6 +4,7 @@ import type {
   InteractionType, ViewportPosition, Viewport, BoundingBox,
 } from '../../types/index.js';
 import type { MatchPair } from './matcher.js';
+import type { ComponentField } from '../component-index/types.js';
 
 const VISUAL_LABEL_TO_ROLE: Record<string, string> = {
   button: 'button', input: 'textbox', link: 'link', select: 'combobox',
@@ -11,10 +12,15 @@ const VISUAL_LABEL_TO_ROLE: Record<string, string> = {
   nav: 'navigation', image: 'img', icon: 'img', text: 'text',
 };
 
-export function buildSceneNode(pair: MatchPair, viewport: Viewport): SceneNode {
+export function buildSceneNode(
+  pair: MatchPair,
+  viewport: Viewport,
+  componentMap?: ReadonlyMap<string, ComponentField>,
+): SceneNode {
   const { visualElement: v, structuralNode: s, fusionMethod } = pair;
   const bb = s?.boundingBox ?? v!.boundingBox;
   const id = s?.id ?? v!.id;
+  const component = componentMap?.get(id);
 
   return {
     id,
@@ -41,6 +47,7 @@ export function buildSceneNode(pair: MatchPair, viewport: Viewport): SceneNode {
     visualConfidence: v?.confidence ?? 0,
     structuralConfidence: s !== null ? 1 : 0,
     fusionMethod,
+    ...(component ? { component } : {}),
   };
 }
 

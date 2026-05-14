@@ -3,6 +3,7 @@ import type { VisualElement, StructuralNode, SceneGraph, Viewport, ScrollPositio
 import { matchElements } from './matcher.js';
 import { buildSceneNode } from './node-builder.js';
 import { createLogger } from '../../utils/logger.js';
+import type { ComponentField } from '../component-index/types.js';
 
 const logger = createLogger('FusionEngine');
 
@@ -17,11 +18,12 @@ export class FusionEngine {
     visual: VisualElement[],
     structural: StructuralNode[],
     context: FusionContext,
+    componentMap?: ReadonlyMap<string, ComponentField>,
   ): SceneGraph {
-    logger.info('Fusing visual + structural', { visual: visual.length, structural: structural.length });
+    logger.info('Fusing visual + structural', { visual: visual.length, structural: structural.length, components: componentMap?.size ?? 0 });
 
     const pairs = matchElements(visual, structural);
-    const nodes = pairs.map(pair => buildSceneNode(pair, context.viewport));
+    const nodes = pairs.map(pair => buildSceneNode(pair, context.viewport, componentMap));
 
     const nodeIds = new Set(nodes.map(n => n.id));
     const rootNodeIds = nodes
