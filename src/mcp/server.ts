@@ -26,6 +26,12 @@ import { FlowCollector } from '../pipelines/temporal/collectors/optical-flow.js'
 import { createLogger } from '../utils/logger.js';
 import type { Collector } from '../pipelines/temporal/collectors/types.js';
 import { makeGetTimelineTool } from './tools/get-timeline.js';
+import { ComponentIndexStore } from '../pipelines/component-index/store.js';
+import { ClassificationQueue } from '../pipelines/component-index/queue.js';
+import { Matcher } from '../pipelines/component-index/matcher.js';
+import { Indexer } from '../pipelines/component-index/indexer.js';
+import { classifyByVlm } from '../pipelines/component-index/vlm-classifier.js';
+import { makeGetComponentIndexTool } from './tools/get-component-index.js';
 
 const log = createLogger('mcp-server');
 const FLOW_BINARY_PATH = process.env.UIPE_FLOW_BINARY ??
@@ -49,6 +55,7 @@ export const TOOL_NAMES = [
   'watch',
   'stop_watch',
   'get_timeline',
+  'get_component_index',
 ] as const;
 
 export function createServer(config: ServerConfig = {}): McpServer {
@@ -60,6 +67,10 @@ export function createServer(config: ServerConfig = {}): McpServer {
   const tracker = new TemporalTracker();
   const affordance = new AffordanceEngine();
   const visual = config.visual ? new VisualPipeline(config.visual) : null;
+  const componentStore = new ComponentIndexStore();
+  const componentQueue = new ClassificationQueue();
+  const componentMatcher = new Matcher({ store: componentStore, queue: componentQueue });
+  const componentIndexer = new Indexer({ matcher: componentMatcher });
   const eventStream = new TemporalEventStream();
   let frameCapture: FrameCapture | null = null;
   let flowProducer: FlowProducer | null = null;
@@ -119,10 +130,29 @@ export function createServer(config: ServerConfig = {}): McpServer {
       const result = await visual.analyze(screenshot, includeVisual);
       visualElements = result.elements;
     }
+    const origin = originOf(runtime.currentUrl());
+    const componentMap = await componentIndexer.run(nodes, { origin });
     return fusion.fuse(visualElements, nodes, {
       url: runtime.currentUrl(),
       viewport: { width: Config.browser.viewportWidth, height: Config.browser.viewportHeight },
       scrollPosition: { x: 0, y: 0 },
+    }, componentMap);
+  }
+
+  function originOf(url: string): string {
+    try {
+      return new URL(url).origin;
+    } catch {
+      return url;
+    }
+  }
+
+  function scheduleIdleDrain(): void {
+    if (componentQueue.size() === 0) return;
+    void componentQueue.drainOnce({
+      classifier: async ({ html, screenshotCrop }) => classifyByVlm({ html, screenshotCrop }),
+      screenshotProvider: () => runtime.screenshot().catch(() => null),
+      store: componentStore,
     });
   }
 
@@ -147,6 +177,7 @@ export function createServer(config: ServerConfig = {}): McpServer {
       if (transition) {
         text += `\n\n[Transition: ${transition.type}, +${transition.diff.added.length} -${transition.diff.removed.length} ~${transition.diff.modified.length}]`;
       }
+      scheduleIdleDrain();
       return { content: [{ type: 'text' as const, text }] };
     },
   );
@@ -171,6 +202,7 @@ export function createServer(config: ServerConfig = {}): McpServer {
         if (transition) {
           text += `\n\n[Transition: ${transition.type}]`;
         }
+        scheduleIdleDrain();
         return { content: [{ type: 'text' as const, text }] };
       }
       const latest = tracker.getLatest();
@@ -236,6 +268,7 @@ export function createServer(config: ServerConfig = {}): McpServer {
       if (transition) {
         text += `\n\n[Transition: ${transition.type}]`;
       }
+      scheduleIdleDrain();
       return { content: [{ type: 'text' as const, text }] };
     },
   );
@@ -521,6 +554,27 @@ export function createServer(config: ServerConfig = {}): McpServer {
     async (args) => {
       const { events } = await timelineTool.handler(args);
       return { content: [{ type: 'text' as const, text: JSON.stringify(events, null, 2) }] };
+    },
+  );
+
+  // Tool 14: get_component_index
+  const componentIndexTool = makeGetComponentIndexTool({
+    store: componentStore,
+    currentOrigin: () => originOf(runtime.currentUrl()),
+  });
+  server.registerTool(
+    componentIndexTool.name,
+    {
+      title: 'Get Component Index',
+      description: componentIndexTool.description,
+      inputSchema: z.object({
+        origin: z.string().optional().describe('Origin URL (defaults to the current page origin)'),
+      }),
+    },
+    async ({ origin }) => {
+      const result = await componentIndexTool.handler({ origin });
+      scheduleIdleDrain();
+      return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
     },
   );
 
