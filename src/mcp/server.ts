@@ -32,6 +32,12 @@ import { Matcher } from '../pipelines/component-index/matcher.js';
 import { Indexer } from '../pipelines/component-index/indexer.js';
 import { classifyByVlm } from '../pipelines/component-index/vlm-classifier.js';
 import { makeGetComponentIndexTool } from './tools/get-component-index.js';
+import {
+  createPerceptionState,
+  makeStartPerceptionTool,
+  makeStopPerceptionTool,
+  makeGetPerceptionSessionTool,
+} from './tools/perception.js';
 
 const log = createLogger('mcp-server');
 const FLOW_BINARY_PATH = process.env.UIPE_FLOW_BINARY ??
@@ -56,6 +62,9 @@ export const TOOL_NAMES = [
   'stop_watch',
   'get_timeline',
   'get_component_index',
+  'start_perception',
+  'stop_perception',
+  'get_perception_session',
 ] as const;
 
 export function createServer(config: ServerConfig = {}): McpServer {
@@ -71,6 +80,7 @@ export function createServer(config: ServerConfig = {}): McpServer {
   const componentQueue = new ClassificationQueue();
   const componentMatcher = new Matcher({ store: componentStore, queue: componentQueue });
   const componentIndexer = new Indexer({ matcher: componentMatcher });
+  const perceptionState = createPerceptionState();
   const eventStream = new TemporalEventStream();
   let frameCapture: FrameCapture | null = null;
   let flowProducer: FlowProducer | null = null;
@@ -574,6 +584,97 @@ export function createServer(config: ServerConfig = {}): McpServer {
     async ({ origin }) => {
       const result = await componentIndexTool.handler({ origin });
       scheduleIdleDrain();
+      return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
+    },
+  );
+
+  // Tool 15: start_perception
+  const startPerceptionTool = makeStartPerceptionTool({
+    state: perceptionState,
+    ensureLaunched,
+    ensureWatchStarted: async () => {
+      // Mirror the watch tool's FrameCapture startup, but without returning a response.
+      // No-op if FrameCapture is already running.
+      if (frameCapture?.capturing) return;
+      await ensureLaunched();
+      frameCapture = new FrameCapture();
+      keyframeCount = 0;
+      watchStartTime = Date.now();
+      frameCapture.on('keyframe', async () => {
+        keyframeCount++;
+        try {
+          const graph = await captureGraph();
+          tracker.observe(graph);
+        } catch {
+          // Silently skip — frame capture continues
+        }
+      });
+      await frameCapture.start(runtime.getPage());
+      if (flowProducer) {
+        flowBridge = new EventEmitter();
+        flowBridgeListener = async (kf: { frame: Buffer; timestamp: number }) => {
+          if (!flowProducer || !flowBridge) return;
+          try {
+            const phash = await frameCapture!.perceptualHash(kf.frame);
+            flowBridge.emit('keyframe', { pngBytes: kf.frame, phash, timestamp: kf.timestamp });
+          } catch (err) {
+            log.warn('perceptualHash failed, skipping frame for optical-flow', { error: String(err) });
+          }
+        };
+        frameCapture.on('keyframe', flowBridgeListener);
+        flowProducer.attachFrameSource(flowBridge);
+      }
+    },
+    getEventStream: () => eventStream,
+    getSessionDeps: () => ({
+      page: runtime.getPage(),
+      frameCapture: frameCapture!,
+      indexer: componentIndexer,
+      structuralPipeline: structural,
+      classifyByVlm,
+      getScreenshot: () => runtime.screenshot().catch(() => null),
+    }),
+  });
+  server.registerTool(
+    startPerceptionTool.name,
+    {
+      title: 'Start Perception Session',
+      description: startPerceptionTool.description,
+      inputSchema: z.object({}),
+    },
+    async () => {
+      await ensureStreamAttached();
+      const result = await startPerceptionTool.handler({});
+      return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
+    },
+  );
+
+  // Tool 16: stop_perception
+  const stopPerceptionTool = makeStopPerceptionTool({ state: perceptionState });
+  server.registerTool(
+    stopPerceptionTool.name,
+    {
+      title: 'Stop Perception Session',
+      description: stopPerceptionTool.description,
+      inputSchema: z.object({}),
+    },
+    async () => {
+      const result = await stopPerceptionTool.handler({});
+      return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
+    },
+  );
+
+  // Tool 17: get_perception_session
+  const getPerceptionSessionTool = makeGetPerceptionSessionTool({ state: perceptionState });
+  server.registerTool(
+    getPerceptionSessionTool.name,
+    {
+      title: 'Get Perception Session',
+      description: getPerceptionSessionTool.description,
+      inputSchema: z.object({}),
+    },
+    async () => {
+      const result = await getPerceptionSessionTool.handler({});
       return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
     },
   );
