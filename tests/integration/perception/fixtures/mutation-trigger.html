@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html>
+<head><title>Mutation Trigger</title>
+<style>
+  body { font-family: system-ui; padding: 24px; }
+  #target { display: block; width: 200px; height: 80px; padding: 16px; border: 1px solid #ccc; background: #eef; }
+  button { padding: 8px 16px; margin-top: 12px; cursor: pointer; }
+</style>
+</head>
+<body>
+  <div id="target">
+    <span id="text">original text</span>
+  </div>
+  <button id="trigger">Trigger mutation</button>
+  <script>
+    document.getElementById('trigger').addEventListener('click', () => {
+      // Pure JS mutation — no CSS animation.
+      setTimeout(() => {
+        document.getElementById('text').textContent = 'changed';
+      }, 50);
+    });
+  </script>
+</body>
+</html>
