@@ -26,19 +26,19 @@ describe('PerceptionSession lifecycle', () => {
     expect(s.targetCadenceMs.intent).toBe(1000);
   });
 
-  it('start() sets startedAt', () => {
-    session.start(100);
+  it('start() sets startedAt', async () => {
+    await session.start(100);
     const s = session.getSummary();
     expect(s.startedAt).toBe(100);
   });
 
-  it('start() called twice throws', () => {
-    session.start(100);
-    expect(() => session.start(200)).toThrow();
+  it('start() called twice throws', async () => {
+    await session.start(100);
+    await expect(session.start(200)).rejects.toThrow();
   });
 
-  it('stop() sets durationMs based on time elapsed', () => {
-    session.start(100);
+  it('stop() sets durationMs based on time elapsed', async () => {
+    await session.start(100);
     session.stop(450);
     const s = session.getSummary();
     expect(s.durationMs).toBe(350);
@@ -48,8 +48,8 @@ describe('PerceptionSession lifecycle', () => {
     expect(() => session.stop(100)).toThrow();
   });
 
-  it('recordTick increments tier count and emits perception-tick', () => {
-    session.start(100);
+  it('recordTick increments tier count and emits perception-tick', async () => {
+    await session.start(100);
     session.recordTick('frame', 'keyframe', 150);
     const s = session.getSummary();
     expect(s.tickCounts.frame).toBe(1);
@@ -58,8 +58,8 @@ describe('PerceptionSession lifecycle', () => {
     );
   });
 
-  it('recordAnomaly increments anomalyCount and reason bucket', () => {
-    session.start(100);
+  it('recordAnomaly increments anomalyCount and reason bucket', async () => {
+    await session.start(100);
     session.recordAnomaly('frame', 'mutation-outside-animation', { mutationCount: 2, targetNodeIds: ['x', 'y'] }, 200);
     const s = session.getSummary();
     expect(s.anomalyCount).toBe(1);
@@ -73,8 +73,8 @@ describe('PerceptionSession lifecycle', () => {
     );
   });
 
-  it('recordEscalation increments escalationCount', () => {
-    session.start(100);
+  it('recordEscalation increments escalationCount', async () => {
+    await session.start(100);
     session.recordEscalation('frame', 'semantic', 'mutation-outside-animation', [{ nodeId: 'a', bbox: { x: 0, y: 0, w: 10, h: 10 } }], 250);
     expect(session.getSummary().escalationCount).toBe(1);
     expect(stream.push).toHaveBeenCalledWith(
@@ -86,8 +86,8 @@ describe('PerceptionSession lifecycle', () => {
     );
   });
 
-  it('recordIntentResult increments intentResultCount + vlmCalls.count', () => {
-    session.start(100);
+  it('recordIntentResult increments intentResultCount + vlmCalls.count', async () => {
+    await session.start(100);
     session.recordIntentResult(
       { nodeId: 'a', bbox: { x: 0, y: 0, w: 10, h: 10 } },
       'AnimatedCounter',
@@ -106,8 +106,8 @@ describe('PerceptionSession lifecycle', () => {
     );
   });
 
-  it('averageCadenceMs computes mean inter-tick interval per tier', () => {
-    session.start(0);
+  it('averageCadenceMs computes mean inter-tick interval per tier', async () => {
+    await session.start(0);
     session.recordTick('frame', 'keyframe', 100);
     session.recordTick('frame', 'keyframe', 300);   // gap 200
     session.recordTick('frame', 'keyframe', 500);   // gap 200
@@ -117,7 +117,7 @@ describe('PerceptionSession lifecycle', () => {
     expect(s.averageCadenceMs.intent).toBeNull();
   });
 
-  it('internalEmitter is a usable EventEmitter', () => {
+  it('internalEmitter is a usable EventEmitter', async () => {
     const handler = vi.fn();
     session.internalEmitter.on('escalate', handler);
     session.internalEmitter.emit('escalate', { from: 'frame', regions: [] });
@@ -154,10 +154,10 @@ describe('PerceptionSession composed with loops', () => {
     return { stream, frameCapture, indexer, structuralPipeline, page, classifyByVlm, getScreenshot };
   }
 
-  it('start() registers framenavigated and close handlers on the page', () => {
+  it('start() registers framenavigated and close handlers on the page', async () => {
     const deps = mkComposedDeps();
     const session = new PerceptionSession({ eventStream: deps.stream });
-    session.start(0, {
+    await session.start(0, {
       page: deps.page,
       frameCapture: deps.frameCapture,
       indexer: deps.indexer,
@@ -170,10 +170,10 @@ describe('PerceptionSession composed with loops', () => {
     session.stop(100);
   });
 
-  it('stop() cleanly removes page listeners', () => {
+  it('stop() cleanly removes page listeners', async () => {
     const deps = mkComposedDeps();
     const session = new PerceptionSession({ eventStream: deps.stream });
-    session.start(0, {
+    await session.start(0, {
       page: deps.page,
       frameCapture: deps.frameCapture,
       indexer: deps.indexer,
@@ -186,10 +186,10 @@ describe('PerceptionSession composed with loops', () => {
     expect(deps.page.off).toHaveBeenCalledWith('close', expect.any(Function));
   });
 
-  it('navigation event resets sessionStartMs and emits a navigation-reset tick', () => {
+  it('navigation event resets sessionStartMs and emits a navigation-reset tick', async () => {
     const deps = mkComposedDeps();
     const session = new PerceptionSession({ eventStream: deps.stream });
-    session.start(0, {
+    await session.start(0, {
       page: deps.page,
       frameCapture: deps.frameCapture,
       indexer: deps.indexer,
@@ -197,9 +197,16 @@ describe('PerceptionSession composed with loops', () => {
       classifyByVlm: deps.classifyByVlm,
       getScreenshot: deps.getScreenshot,
     });
-    // Find and invoke the framenavigated handler
-    const navHandler = deps.page.on.mock.calls.find((c: any[]) => c[0] === 'framenavigated')[1];
-    navHandler();
+    // Find and invoke the framenavigated handler registered by the session (onPageNav).
+    // FrameLoop also registers its own framenavigated handler; we want the session's one
+    // which resets startedAt and emits the navigation-reset tick.
+    const navCalls = deps.page.on.mock.calls.filter((c: any[]) => c[0] === 'framenavigated');
+    // Session's onPageNav is the one registered directly by session.start (not FrameLoop).
+    // It is always the last call because FrameLoop.start() runs before the session's page.on.
+    // We identify it by invoking all and checking the tick was emitted.
+    for (const [, handler] of navCalls) {
+      handler();
+    }
     expect(deps.stream.push).toHaveBeenCalledWith(
       expect.objectContaining({
         type: 'perception-tick',
@@ -209,10 +216,10 @@ describe('PerceptionSession composed with loops', () => {
     session.stop(100);
   });
 
-  it('page close auto-stops the session', () => {
+  it('page close auto-stops the session', async () => {
     const deps = mkComposedDeps();
     const session = new PerceptionSession({ eventStream: deps.stream });
-    session.start(0, {
+    await session.start(0, {
       page: deps.page,
       frameCapture: deps.frameCapture,
       indexer: deps.indexer,

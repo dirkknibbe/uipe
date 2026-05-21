@@ -86,7 +86,7 @@ export class PerceptionSession {
     this.stream = options.eventStream;
   }
 
-  start(nowMs: number, deps?: SessionStartDeps): void {
+  async start(nowMs: number, deps?: SessionStartDeps): Promise<void> {
     if (this.state !== 'idle') {
       throw new Error(`PerceptionSession.start() called in state "${this.state}"`);
     }
@@ -114,7 +114,10 @@ export class PerceptionSession {
         classifyByVlm: deps.classifyByVlm,
         getScreenshot: deps.getScreenshot,
       });
-      this.frameLoop.start();
+      // Await frameLoop.start() so the page-side observer is installed before
+      // the first keyframe fires (Fix 3: prevents silent false negatives and
+      // unhandled rejections from exposeFunction errors).
+      await this.frameLoop.start();
       this.semanticLoop.start();
       this.intentLoop.start();
       deps.page.on('framenavigated', this.onPageNav);

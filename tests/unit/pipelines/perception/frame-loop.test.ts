@@ -65,7 +65,7 @@ function setup(config?: { lookbackMs?: number; coalesceWindowMs?: number; warmup
 describe('FrameLoop', () => {
   it('emits perception-tick { tier: frame, cause: keyframe } on each keyframe', async () => {
     const { session, frameCapture, loop, stream } = setup({ warmupMs: 0 });
-    session.start(0);
+    await session.start(0);
     await loop.start();
 
     frameCapture.emitKeyframe(50);
@@ -79,7 +79,7 @@ describe('FrameLoop', () => {
 
   it('tracks animation-start/end and suppresses anomaly while animation is active', async () => {
     const { session, frameCapture, loop, stream } = setup({ warmupMs: 0 });
-    session.start(0);
+    await session.start(0);
     await loop.start();
 
     // Start animation, add a mutation, fire keyframe — no anomaly expected.
@@ -105,7 +105,7 @@ describe('FrameLoop', () => {
 
   it('emits perception-anomaly and perception-escalation when detector fires', async () => {
     const { session, frameCapture, loop, stream } = setup({ warmupMs: 0 });
-    session.start(0);
+    await session.start(0);
     await loop.start();
 
     loop.addMutationForTest(100, 'node-a');
@@ -125,7 +125,7 @@ describe('FrameLoop', () => {
     const { session, frameCapture, loop } = setup({ warmupMs: 0 });
     const handler = vi.fn();
     session.internalEmitter.on('escalate', handler);
-    session.start(0);
+    await session.start(0);
     await loop.start();
 
     loop.addMutationForTest(100, 'node-a');
@@ -138,7 +138,7 @@ describe('FrameLoop', () => {
 
   it('trims recentMutations older than lookbackMs', async () => {
     const { session, frameCapture, loop, stream } = setup({ lookbackMs: 100, warmupMs: 0 });
-    session.start(0);
+    await session.start(0);
     await loop.start();
 
     // Mutation at t=0, keyframe at t=500 → gap 500 > lookbackMs 100
@@ -153,7 +153,7 @@ describe('FrameLoop', () => {
 
   it('debounces back-to-back keyframes within coalesce window', async () => {
     const { session, frameCapture, loop, stream } = setup({ warmupMs: 0, coalesceWindowMs: 100 });
-    session.start(0);
+    await session.start(0);
     await loop.start();
 
     loop.addMutationForTest(100, 'node-a');
@@ -168,7 +168,7 @@ describe('FrameLoop', () => {
 
   it('stop() unsubscribes from frameCapture and eventStream', async () => {
     const { session, frameCapture, loop, stream } = setup({ warmupMs: 0 });
-    session.start(0);
+    await session.start(0);
     await loop.start();
     loop.stop();
 
@@ -184,7 +184,7 @@ describe('FrameLoop', () => {
 
   it('warmup gate suppresses anomaly before warmupMs elapses', async () => {
     const { session, frameCapture, loop, stream } = setup({ warmupMs: 500 });
-    session.start(0);
+    await session.start(0);
     await loop.start();
 
     // Mutation at t=100, keyframe at t=200 — still within 500ms warmup

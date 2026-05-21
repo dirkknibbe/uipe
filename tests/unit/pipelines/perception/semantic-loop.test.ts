@@ -53,9 +53,9 @@ describe('SemanticLoop', () => {
   beforeEach(() => vi.useFakeTimers());
   afterEach(() => vi.useRealTimers());
 
-  it('does not tick when idle (no escalations, heartbeat fires but queue empty)', () => {
+  it('does not tick when idle (no escalations, heartbeat fires but queue empty)', async () => {
     const { session, stream } = mkSession();
-    session.start(0);
+    await session.start(0);
     const indexer = mkIndexer(new Map());
     const loop = new SemanticLoop({
       session,
@@ -75,7 +75,7 @@ describe('SemanticLoop', () => {
 
   it('wakes on escalation and emits a semantic tick', async () => {
     const { session, stream } = mkSession();
-    session.start(0);
+    await session.start(0);
     const indexer = mkIndexer(new Map());
     const loop = new SemanticLoop({
       session,
@@ -100,7 +100,7 @@ describe('SemanticLoop', () => {
 
   it('rate-bounds: two escalations within cadenceMs produce one tick', async () => {
     const { session, stream } = mkSession();
-    session.start(0);
+    await session.start(0);
     const indexer = mkIndexer(new Map());
     const loop = new SemanticLoop({
       session,
@@ -129,7 +129,7 @@ describe('SemanticLoop', () => {
 
   it('calls structural.extractStructure and indexer.run on each tick', async () => {
     const { session, stream } = mkSession();
-    session.start(0);
+    await session.start(0);
     const indexer = mkIndexer(new Map());
     const structural = mkStructural([{ id: 'n-1', tag: 'div' }]);
     const loop = new SemanticLoop({
@@ -155,7 +155,7 @@ describe('SemanticLoop', () => {
     // Structural pipeline returns node 'a'. Indexer returns 'a' as pending.
     // SemanticLoop should escalate using 'a' from the indexer, not 'x' from the frame payload.
     const { session, stream } = mkSession();
-    session.start(0);
+    await session.start(0);
     const componentMap = new Map([
       ['a', { name: null, status: 'pending', signature: 'sig-1' }],
     ]);
@@ -193,7 +193,7 @@ describe('SemanticLoop', () => {
 
   it('escalates to intent when indexer flags a node as pending', async () => {
     const { session, stream } = mkSession();
-    session.start(0);
+    await session.start(0);
     const componentMap = new Map([
       ['a', { name: null, status: 'pending', signature: 'sig-1' }],
     ]);
@@ -232,7 +232,7 @@ describe('SemanticLoop', () => {
 
   it('does not escalate to intent when no nodes are pending', async () => {
     const { session, stream } = mkSession();
-    session.start(0);
+    await session.start(0);
     const componentMap = new Map([
       ['a', { name: 'Button', source: 'rules', signature: 'sig-1' }],
     ]);
@@ -266,7 +266,7 @@ describe('SemanticLoop', () => {
 
   it('stop() unsubscribes — escalations after stop are ignored', async () => {
     const { session, stream } = mkSession();
-    session.start(0);
+    await session.start(0);
     const loop = new SemanticLoop({
       session,
       eventStream: stream as unknown as TemporalEventStream,

@@ -556,7 +556,23 @@ export function createServer(config: ServerConfig = {}): McpServer {
       inputSchema: z.object({
         since: z.number().optional().describe('Only return events with timestamp >= since (stream-relative ms)'),
         types: z
-          .array(z.enum(['input', 'mutation', 'network-request', 'network-response', 'animation-start', 'animation-end', 'phash-change']))
+          .array(z.enum([
+            'input',
+            'mutation',
+            'network-request',
+            'network-response',
+            'animation-start',
+            'animation-end',
+            'animation-prediction',
+            'phash-change',
+            'optical-flow-raw',
+            'optical-flow-region',
+            'optical-flow-motion',
+            'perception-tick',
+            'perception-anomaly',
+            'perception-escalation',
+            'perception-intent-result',
+          ]))
           .optional()
           .describe('Filter by event types'),
       }),

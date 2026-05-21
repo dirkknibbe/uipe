@@ -104,8 +104,11 @@ export class IntentLoop {
 
     try {
       // One tick per drain cycle, not per region.
+      // Guard: if stop() was called while we were awaiting, skip recording.
       const tickAt = Date.now();
-      this.session.recordTick('intent', 'escalation', tickAt);
+      if (this.running) {
+        this.session.recordTick('intent', 'escalation', tickAt);
+      }
 
       const screenshot = await this.getScreenshot();
       if (!screenshot) {
@@ -125,12 +128,15 @@ export class IntentLoop {
           const crop = await cropToBbox(screenshot, item.bbox);
           const classification = await this.classify({ html: '', screenshotCrop: crop });
           const duration = Date.now() - start;
-          this.session.recordIntentResult(
-            { nodeId: item.nodeId, bbox: item.bbox },
-            classification,
-            duration,
-            Date.now(),
-          );
+          // Fix 5: guard against stop() arriving during the classify await.
+          if (this.running) {
+            this.session.recordIntentResult(
+              { nodeId: item.nodeId, bbox: item.bbox },
+              classification,
+              duration,
+              Date.now(),
+            );
+          }
         } catch (err) {
           logger.warn('IntentLoop: per-region classification failed, skipping', {
             nodeId: item.nodeId,

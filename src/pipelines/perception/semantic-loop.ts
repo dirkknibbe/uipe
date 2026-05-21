@@ -100,7 +100,7 @@ export class SemanticLoop {
     // Run the full structural + indexer pipeline.
     const structural = await this.structuralPipeline.extractStructure(this.page);
     const componentMap = await this.indexer.run(structural, {
-      origin: (this.page as any).url?.() ?? 'unknown',
+      origin: this.page.url(),
     });
 
     // Build a lookup from node id → structural node for bbox resolution.
@@ -109,7 +109,7 @@ export class SemanticLoop {
     // Collect nodes the indexer marked as pending (unclassified).
     const pendingRegions: Array<{ nodeId: string; bbox: { x: number; y: number; w: number; h: number } }> = [];
     for (const [nodeId, field] of componentMap) {
-      if (field.name === null && (field as any).status === 'pending') {
+      if (field.name === null) {
         const node = nodeById.get(nodeId);
         const bb = node?.boundingBox ?? { x: 0, y: 0, width: 0, height: 0 };
         pendingRegions.push({

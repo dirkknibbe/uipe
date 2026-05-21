@@ -64,7 +64,7 @@ function tickCalls(stream: FakeEventStream, tier: string) {
 describe('IntentLoop', () => {
   it('does not call VLM unless an escalation arrives', async () => {
     const { session, stream } = mkSession();
-    session.start(0);
+    await session.start(0);
     const classify = vi.fn(async () => 'X');
     const getScreenshot = vi.fn(async () => PNG);
     const loop = new IntentLoop({ session, eventStream: stream as unknown as TemporalEventStream, getScreenshot, classifyByVlm: classify });
@@ -75,7 +75,7 @@ describe('IntentLoop', () => {
 
   it('classifies each region in an escalation and emits perception-intent-result', async () => {
     const { session, stream } = mkSession();
-    session.start(0);
+    await session.start(0);
     const classify = vi.fn(async () => 'AnimatedCounter');
     const getScreenshot = vi.fn(async () => PNG);
     const loop = new IntentLoop({ session, eventStream: stream as unknown as TemporalEventStream, getScreenshot, classifyByVlm: classify });
@@ -97,7 +97,7 @@ describe('IntentLoop', () => {
 
   it('emits a single perception-tick for the drain (not per-region)', async () => {
     const { session, stream } = mkSession();
-    session.start(0);
+    await session.start(0);
     const classify = vi.fn(async () => 'X');
     const getScreenshot = vi.fn(async () => PNG);
     const loop = new IntentLoop({ session, eventStream: stream as unknown as TemporalEventStream, getScreenshot, classifyByVlm: classify });
@@ -118,7 +118,7 @@ describe('IntentLoop', () => {
 
   it('drops oldest when pending queue exceeds maxPending', async () => {
     const { session, stream } = mkSession();
-    session.start(0);
+    await session.start(0);
 
     // classifier that never resolves until we call resolveClassify
     let resolveClassify: (v: string) => void = () => {};
@@ -158,7 +158,7 @@ describe('IntentLoop', () => {
 
   it('skips classification when screenshot provider returns null', async () => {
     const { session, stream } = mkSession();
-    session.start(0);
+    await session.start(0);
     const classify = vi.fn(async () => 'X');
     const getScreenshot = vi.fn(async () => null);
     const loop = new IntentLoop({ session, eventStream: stream as unknown as TemporalEventStream, getScreenshot, classifyByVlm: classify });
@@ -175,7 +175,7 @@ describe('IntentLoop', () => {
 
   it('continues past a per-region classifier error', async () => {
     const { session, stream } = mkSession();
-    session.start(0);
+    await session.start(0);
     const classify = vi.fn()
       .mockImplementationOnce(async () => { throw new Error('boom'); })
       .mockImplementationOnce(async () => 'OK');
@@ -201,7 +201,7 @@ describe('IntentLoop', () => {
 
   it('ignores escalation events whose from is not semantic', async () => {
     const { session, stream } = mkSession();
-    session.start(0);
+    await session.start(0);
     const classify = vi.fn(async () => 'X');
     const getScreenshot = vi.fn(async () => PNG);
     const loop = new IntentLoop({ session, eventStream: stream as unknown as TemporalEventStream, getScreenshot, classifyByVlm: classify });

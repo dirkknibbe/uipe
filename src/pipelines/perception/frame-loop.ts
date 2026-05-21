@@ -37,6 +37,17 @@ export interface FrameLoopOptions {
   config?: Partial<DetectConfig>;
 }
 
+// ---------------------------------------------------------------------------
+// Module-level WeakMap dispatcher (Fix 2: second-session mutation routing).
+//
+// When page.exposeFunction throws "already registered", the OLD closure is
+// still bound on the page. Using a WeakMap keyed by Page lets the page-side
+// function look up the *current* FrameLoop owner, so second (and later)
+// sessions receive their mutations correctly.
+// ---------------------------------------------------------------------------
+type FrameLoopDispatch = (payload: PageMutationPayload) => void;
+const frameLoopDispatchers = new WeakMap<Page, FrameLoopDispatch>();
+
 export class FrameLoop {
   private readonly session: PerceptionSession;
   private readonly frameCapture: FrameCapture;
@@ -57,6 +68,13 @@ export class FrameLoop {
     this.handleStreamEvent(e);
   };
 
+  // Reinstalls the page-side observer after SPA navigation (Fix 1).
+  private readonly onFrameNavigated = async (): Promise<void> => {
+    if (this.page) {
+      await this.installPageObserver(this.page);
+    }
+  };
+
   constructor(opts: FrameLoopOptions) {
     this.session = opts.session;
     this.frameCapture = opts.frameCapture;
@@ -67,11 +85,16 @@ export class FrameLoop {
 
   /**
    * Start the loop. Installs the page-side MutationObserver (if a page was
-   * provided), subscribes to FrameCapture keyframes and stream events.
+   * provided), subscribes to FrameCapture keyframes, stream events, and
+   * framenavigated (to reinstall after SPA route changes).
    */
   async start(): Promise<void> {
     if (this.page) {
       await this.installPageObserver(this.page);
+      // Fix 1: subscribe to navigation so the observer is reinstalled after
+      // each SPA route change. The session's onPageNav also fires but only
+      // resets startedAt — these two handlers are independent.
+      this.page.on('framenavigated', this.onFrameNavigated);
     }
     this.frameCapture.on('keyframe', this.onKeyframe);
     this.eventStream.on('event', this.onStreamEvent);
@@ -79,6 +102,11 @@ export class FrameLoop {
 
   /** Stop the loop and clean up subscriptions. */
   stop(): void {
+    if (this.page) {
+      this.page.off('framenavigated', this.onFrameNavigated);
+      // Remove this loop from the dispatcher so a future session starts clean.
+      frameLoopDispatchers.delete(this.page);
+    }
     this.frameCapture.off('keyframe', this.onKeyframe);
     this.eventStream.off('event', this.onStreamEvent);
     this.activeAnimations.clear();
@@ -118,18 +146,33 @@ export class FrameLoop {
    * Strategy mirrors MutationCollector's pattern (exposeFunction +
    * page.evaluate guard) but emits one record per mutation rather than
    * batched counters.
+   *
+   * Fix 2: uses a module-level WeakMap dispatcher so that when
+   * exposeFunction throws "already registered" (because a prior FrameLoop
+   * left the binding), the page-side closure still routes to *this* instance.
+   *
+   * Fix 1: also called on every `framenavigated` event so mutations are
+   * not silently lost after SPA route changes (which destroy the page-side
+   * flag + observer).
    */
   private async installPageObserver(page: Page): Promise<void> {
-    const self = this;
+    // Register this instance as the current dispatcher for this Page.
+    frameLoopDispatchers.set(page, (payload: PageMutationPayload) => {
+      this.recentMutations.push({
+        timestamp: payload.timestamp,
+        targetNodeId: payload.targetNodeId,
+      });
+    });
 
     try {
+      // The stable closure looks up the current dispatcher via the WeakMap,
+      // so a second (or later) FrameLoop session automatically gets its
+      // mutations even though the function binding is from the first session.
       await page.exposeFunction(
         '__uipeFrameLoopMutation',
         (payload: PageMutationPayload) => {
-          self.recentMutations.push({
-            timestamp: payload.timestamp,
-            targetNodeId: payload.targetNodeId,
-          });
+          const fn = frameLoopDispatchers.get(page);
+          if (fn) fn(payload);
         },
       );
     } catch (err) {
@@ -137,10 +180,15 @@ export class FrameLoop {
       if (!msg.includes('registered')) {
         throw err;
       }
-      // Already registered from a prior attach — the closure above still
-      // captures the new FrameLoop instance so mutations route correctly.
+      // Already registered from a prior attach. The WeakMap dispatcher above
+      // ensures the old closure now routes to this FrameLoop instance.
+      // Note: DEFERRED — only the FIRST session on a given page lifecycle
+      // works correctly; subsequent sessions on the same page lifetime are
+      // handled by the WeakMap redirect. See spec follow-up for full fix.
     }
 
+    // After navigation the flag is gone — always re-run evaluate so the
+    // MutationObserver is reinstalled on the new document.
     await page.evaluate(() => {
       const win = window as any;
       if (win.__uipeFrameLoopMutationInstalled) return;

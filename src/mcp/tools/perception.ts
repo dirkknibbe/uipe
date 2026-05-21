@@ -55,7 +55,7 @@ export function makeStartPerceptionTool(opts: StartOptions): StartPerceptionTool
         : opts.state.createSession(null as unknown as TemporalEventStream);
       const deps = opts.getSessionDeps();
       const startedAt = Date.now();
-      session.start(startedAt, deps);
+      await session.start(startedAt, deps);
       opts.state.currentSession = session;
       return { status: 'started', startedAt };
     },
