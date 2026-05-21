@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { EventEmitter as NodeEventEmitter } from 'node:events';
 import { PerceptionSession } from '../../../../src/pipelines/perception/session.js';
 import type { TemporalEventStream } from '../../../../src/pipelines/temporal/event-stream.js';
 
@@ -131,5 +132,96 @@ describe('PerceptionSession lifecycle', () => {
   it('durationMs is 0 before start()', () => {
     const s = session.getSummary();
     expect(s.durationMs).toBe(0);
+  });
+});
+
+describe('PerceptionSession composed with loops', () => {
+  function mkComposedDeps() {
+    const stream = new NodeEventEmitter() as any;
+    stream.push = vi.fn();
+    const frameCapture = new NodeEventEmitter() as any;
+    const indexer = { run: vi.fn(async () => new Map()) } as any;
+    const structuralPipeline = { extractStructure: vi.fn(async () => []) } as any;
+    const page = {
+      url: () => 'http://test',
+      on: vi.fn(),
+      off: vi.fn(),
+      exposeFunction: vi.fn(async () => {}),
+      evaluate: vi.fn(async () => {}),
+    } as any;
+    const classifyByVlm = vi.fn(async () => 'X');
+    const getScreenshot = vi.fn(async () => Buffer.from([0x89, 0x50]));
+    return { stream, frameCapture, indexer, structuralPipeline, page, classifyByVlm, getScreenshot };
+  }
+
+  it('start() registers framenavigated and close handlers on the page', () => {
+    const deps = mkComposedDeps();
+    const session = new PerceptionSession({ eventStream: deps.stream });
+    session.start(0, {
+      page: deps.page,
+      frameCapture: deps.frameCapture,
+      indexer: deps.indexer,
+      structuralPipeline: deps.structuralPipeline,
+      classifyByVlm: deps.classifyByVlm,
+      getScreenshot: deps.getScreenshot,
+    });
+    expect(deps.page.on).toHaveBeenCalledWith('framenavigated', expect.any(Function));
+    expect(deps.page.on).toHaveBeenCalledWith('close', expect.any(Function));
+    session.stop(100);
+  });
+
+  it('stop() cleanly removes page listeners', () => {
+    const deps = mkComposedDeps();
+    const session = new PerceptionSession({ eventStream: deps.stream });
+    session.start(0, {
+      page: deps.page,
+      frameCapture: deps.frameCapture,
+      indexer: deps.indexer,
+      structuralPipeline: deps.structuralPipeline,
+      classifyByVlm: deps.classifyByVlm,
+      getScreenshot: deps.getScreenshot,
+    });
+    session.stop(100);
+    expect(deps.page.off).toHaveBeenCalledWith('framenavigated', expect.any(Function));
+    expect(deps.page.off).toHaveBeenCalledWith('close', expect.any(Function));
+  });
+
+  it('navigation event resets sessionStartMs and emits a navigation-reset tick', () => {
+    const deps = mkComposedDeps();
+    const session = new PerceptionSession({ eventStream: deps.stream });
+    session.start(0, {
+      page: deps.page,
+      frameCapture: deps.frameCapture,
+      indexer: deps.indexer,
+      structuralPipeline: deps.structuralPipeline,
+      classifyByVlm: deps.classifyByVlm,
+      getScreenshot: deps.getScreenshot,
+    });
+    // Find and invoke the framenavigated handler
+    const navHandler = deps.page.on.mock.calls.find((c: any[]) => c[0] === 'framenavigated')[1];
+    navHandler();
+    expect(deps.stream.push).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'perception-tick',
+        payload: expect.objectContaining({ tier: 'frame', cause: 'navigation-reset' }),
+      }),
+    );
+    session.stop(100);
+  });
+
+  it('page close auto-stops the session', () => {
+    const deps = mkComposedDeps();
+    const session = new PerceptionSession({ eventStream: deps.stream });
+    session.start(0, {
+      page: deps.page,
+      frameCapture: deps.frameCapture,
+      indexer: deps.indexer,
+      structuralPipeline: deps.structuralPipeline,
+      classifyByVlm: deps.classifyByVlm,
+      getScreenshot: deps.getScreenshot,
+    });
+    const closeHandler = deps.page.on.mock.calls.find((c: any[]) => c[0] === 'close')[1];
+    closeHandler();
+    expect(session.isRunning()).toBe(false);
   });
 });
