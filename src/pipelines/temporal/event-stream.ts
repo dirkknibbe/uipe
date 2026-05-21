@@ -1,3 +1,4 @@
+import { EventEmitter } from 'node:events';
 import type { Page } from 'playwright';
 import type { TimelineEvent, EventType } from './collectors/types.js';
 import type { Collector } from './collectors/types.js';
@@ -30,7 +31,7 @@ const buildNormalizer = (anchors: ClockAnchors): ClockNormalizer => ({
   fromCdpMonotonicSeconds: (secs) => (secs * 1000) - anchors.pagePerformanceAnchorMs,
 });
 
-export class TemporalEventStream {
+export class TemporalEventStream extends EventEmitter {
   private buffer: TimelineEvent[] = [];
   private readonly capacity: number;
   private readonly clearOnNavigate: boolean;
@@ -40,6 +41,7 @@ export class TemporalEventStream {
   private framenavigatedHandler: ((frame: any) => Promise<void>) | undefined;
 
   constructor(options: TemporalEventStreamOptions = {}) {
+    super();
     this.capacity = options.capacity ?? 10000;
     this.clearOnNavigate = options.clearOnNavigate ?? true;
   }
@@ -118,6 +120,8 @@ export class TemporalEventStream {
     if (this.buffer.length > this.capacity) {
       this.buffer.shift();
     }
+    // Emit so subscribers (FrameLoop, SemanticLoop, etc.) can react in real time.
+    this.emit('event', event);
   }
 
   getEvents(filter: GetEventsFilter = {}): TimelineEvent[] {
