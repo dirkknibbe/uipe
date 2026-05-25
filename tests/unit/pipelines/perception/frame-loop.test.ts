@@ -308,6 +308,29 @@ describe('FrameLoop page-side observer', () => {
     loop2.stop();
   });
 
+  it('stopped flag prevents in-flight handler callbacks from polluting summary after stop() (C2 fix)', async () => {
+    // Simulates the race: a keyframe or stream-event listener is invoked
+    // *after* stop() runs (e.g. a re-entrant call from inside an event
+    // emission, or a deferred dispatch from a future FrameCapture
+    // implementation that batches via microtask). Sister loops semantic +
+    // intent both have a `running`/`stopped` flag; FrameLoop should too.
+    const { session, loop, stream } = setup({ warmupMs: 0 });
+    await session.start(0);
+    await loop.start();
+    loop.stop();
+
+    // Capture the original listener and invoke it directly — bypassing the
+    // unsubscribe — to model the race.
+    const onKeyframe = (loop as any).onKeyframe as (kf: KeyframeEvent) => void;
+    expect(typeof onKeyframe).toBe('function');
+    onKeyframe({ frame: Buffer.alloc(0), timestamp: 100, trigger: 'significant_diff' });
+
+    const ticks = stream.push.mock.calls
+      .map((c) => c[0])
+      .filter((e) => e.type === 'perception-tick');
+    expect(ticks).toHaveLength(0);
+  });
+
   it('framenavigated reinstall errors are caught and logged, not unhandled rejections (C3 fix)', async () => {
     const { session, page, loop } = setupWithPage({ warmupMs: 0 });
     await session.start(0);

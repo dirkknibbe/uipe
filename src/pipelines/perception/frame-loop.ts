@@ -62,6 +62,10 @@ export class FrameLoop {
   private recentMutations: MutationRecord[] = [];
   private lastAnomalyEmittedAt = -Infinity;
 
+  /** Once stop() is called, in-flight handler callbacks become no-ops.
+   *  Mirrors the running/stopped guard used by SemanticLoop + IntentLoop. */
+  private stopped = false;
+
   // Bound handlers so we can removeListener in stop().
   private readonly onKeyframe = (kf: KeyframeEvent): void => {
     this.handleKeyframe(kf.timestamp);
@@ -115,6 +119,7 @@ export class FrameLoop {
 
   /** Stop the loop and clean up subscriptions. */
   stop(): void {
+    this.stopped = true;
     if (this.page) {
       this.page.off('framenavigated', this.onFrameNavigated);
       // Remove this loop from the dispatcher so a future session starts clean.
@@ -245,6 +250,7 @@ export class FrameLoop {
   // ---------------------------------------------------------------------------
 
   private handleStreamEvent(e: TimelineEvent<EventType>): void {
+    if (this.stopped) return;
     if (e.type === 'animation-start') {
       const payload = (e as TimelineEvent<'animation-start'>).payload;
       this.activeAnimations.add(payload.animationId);
@@ -256,6 +262,7 @@ export class FrameLoop {
   }
 
   private handleKeyframe(nowMs: number): void {
+    if (this.stopped) return;
     // Trim ring buffer to lookback window.
     this.recentMutations = this.recentMutations.filter(
       (m) => nowMs - m.timestamp <= this.config.lookbackMs,
