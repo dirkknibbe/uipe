@@ -15,12 +15,15 @@ import type { TemporalEventStream } from '../temporal/event-stream.js';
 import type { TimelineEvent, EventType } from '../temporal/collectors/types.js';
 import type { KeyframeEvent } from '../../types/temporal.js';
 import type { PerceptionSession } from './session.js';
+import { createLogger } from '../../utils/logger.js';
 import {
   detectMutationOutsideAnimation,
   DEFAULT_CONFIG,
   type DetectConfig,
   type MutationRecord,
 } from './anomaly/mutation-outside-animation.js';
+
+const logger = createLogger('PerceptionFrameLoop');
 
 // Payload sent from the page side per mutation.
 interface PageMutationPayload {
@@ -69,9 +72,19 @@ export class FrameLoop {
   };
 
   // Reinstalls the page-side observer after SPA navigation (Fix 1).
+  //
+  // Playwright invokes this listener fire-and-forget — any throw from
+  // installPageObserver (target closed mid-nav, evaluate timeout, etc.)
+  // would become an unhandled rejection AND leave the loop firing keyframes
+  // with zero mutations arriving. Catch + log so the failure is observable.
   private readonly onFrameNavigated = async (): Promise<void> => {
-    if (this.page) {
+    if (!this.page) return;
+    try {
       await this.installPageObserver(this.page);
+    } catch (err) {
+      logger.error('FrameLoop: failed to reinstall page-side observer after navigation', {
+        error: err instanceof Error ? err.stack : String(err),
+      });
     }
   };
 
