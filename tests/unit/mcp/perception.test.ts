@@ -42,11 +42,46 @@ describe('start_perception', () => {
       ensureLaunched: deps.ensureLaunched,
       ensureWatchStarted: deps.ensureWatchStarted,
       getSessionDeps: deps.getDeps,
+      getEventStream: () => ({} as any),
     });
     const result = await tool.handler({});
     expect(result).toEqual({ status: 'started', startedAt: expect.any(Number) });
     expect(deps.ensureWatchStarted).toHaveBeenCalled();
     expect(deps.session.start).toHaveBeenCalled();
+  });
+
+  it('throws a clear error when getEventStream is missing and does not mutate state (C4 fix)', async () => {
+    const deps = mkDeps();
+    const state = createPerceptionState();
+    const createSpy = vi.fn(() => deps.session as any);
+    state.createSession = createSpy;
+    const tool = makeStartPerceptionTool({
+      state,
+      ensureLaunched: deps.ensureLaunched,
+      ensureWatchStarted: deps.ensureWatchStarted,
+      getSessionDeps: deps.getDeps,
+      // intentionally no getEventStream
+    });
+    await expect(tool.handler({})).rejects.toThrow(/event ?stream/i);
+    expect(createSpy).not.toHaveBeenCalled();
+    expect(state.currentSession).toBeNull();
+  });
+
+  it('throws a clear error when getEventStream returns undefined (C4 fix)', async () => {
+    const deps = mkDeps();
+    const state = createPerceptionState();
+    const createSpy = vi.fn(() => deps.session as any);
+    state.createSession = createSpy;
+    const tool = makeStartPerceptionTool({
+      state,
+      ensureLaunched: deps.ensureLaunched,
+      ensureWatchStarted: deps.ensureWatchStarted,
+      getSessionDeps: deps.getDeps,
+      getEventStream: () => undefined as any,
+    });
+    await expect(tool.handler({})).rejects.toThrow(/event ?stream/i);
+    expect(createSpy).not.toHaveBeenCalled();
+    expect(state.currentSession).toBeNull();
   });
 
   it('returns already-running if session is active', async () => {

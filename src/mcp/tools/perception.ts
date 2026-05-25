@@ -50,9 +50,16 @@ export function makeStartPerceptionTool(opts: StartOptions): StartPerceptionTool
       await opts.ensureLaunched();
       await opts.ensureWatchStarted();
       const eventStream = opts.getEventStream?.();
-      const session = eventStream
-        ? opts.state.createSession(eventStream)
-        : opts.state.createSession(null as unknown as TemporalEventStream);
+      if (!eventStream) {
+        // C4 fix: previously passed `null as unknown as TemporalEventStream`
+        // to createSession, producing a broken session that crashed inside
+        // start() with an opaque "cannot read property 'on' of null" error
+        // and left state.currentSession in an inconsistent shape.
+        throw new Error(
+          'start_perception: no TemporalEventStream available — call watch first or wire getEventStream on the tool factory',
+        );
+      }
+      const session = opts.state.createSession(eventStream);
       const deps = opts.getSessionDeps();
       const startedAt = Date.now();
       await session.start(startedAt, deps);
