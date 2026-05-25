@@ -53,6 +53,74 @@ describe('SemanticLoop', () => {
   beforeEach(() => vi.useFakeTimers());
   afterEach(() => vi.useRealTimers());
 
+  it('catches tick errors and does not advance lastTickMs so the next escalation retries (I3 fix)', async () => {
+    const { session, stream } = mkSession();
+    await session.start(0);
+    // Structural pipeline rejects — previously this became an unhandled
+    // rejection from `void this.tick()` and `lastTickMs` was already advanced,
+    // gating out the next escalation silently.
+    const structural = {
+      extractStructure: vi.fn(async () => { throw new Error('extract-boom'); }),
+    } as unknown as StructuralPipeline;
+    const indexer = mkIndexer(new Map());
+    const loop = new SemanticLoop({
+      session,
+      eventStream: stream as unknown as TemporalEventStream,
+      indexer,
+      structuralPipeline: structural,
+      page: mkPage(),
+      config: { cadenceMs: 200 },
+    });
+
+    const unhandled: unknown[] = [];
+    const onUnhandled = (reason: unknown) => unhandled.push(reason);
+    process.on('unhandledRejection', onUnhandled);
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    try {
+      loop.start();
+      session.internalEmitter.emit('escalate', { from: 'frame', regions: [] });
+      // Drain the setTimeout + the awaited rejection.
+      await vi.advanceTimersByTimeAsync(10);
+      await Promise.resolve();
+      await Promise.resolve();
+
+      expect(unhandled).toEqual([]);
+      // Warn was logged.
+      const warned = logSpy.mock.calls.some((c) => {
+        const [prefix, msg] = c;
+        return (
+          typeof prefix === 'string' &&
+          prefix.includes('[WARN]') &&
+          typeof msg === 'string' &&
+          /tick failed/i.test(msg)
+        );
+      });
+      expect(warned).toBe(true);
+
+      // lastTickMs must NOT have advanced — so a follow-up escalation
+      // arriving inside the cadence window still ticks.
+      expect((loop as any).lastTickMs).toBe(0);
+
+      // Send a second escalation; the gate should still let it through.
+      structural.extractStructure = vi.fn(async () => []) as any;
+      session.internalEmitter.emit('escalate', { from: 'frame', regions: [] });
+      await vi.advanceTimersByTimeAsync(10);
+      await Promise.resolve();
+      await Promise.resolve();
+
+      const ticks = stream.push.mock.calls
+        .map((c) => c[0])
+        .filter((e) => e.type === 'perception-tick' && (e.payload as any).tier === 'semantic');
+      // First tick recorded before the throw; second tick recorded on retry.
+      expect(ticks.length).toBeGreaterThanOrEqual(2);
+    } finally {
+      process.off('unhandledRejection', onUnhandled);
+      logSpy.mockRestore();
+      loop.stop();
+    }
+  });
+
   it('does not tick when idle (no escalations, heartbeat fires but queue empty)', async () => {
     const { session, stream } = mkSession();
     await session.start(0);

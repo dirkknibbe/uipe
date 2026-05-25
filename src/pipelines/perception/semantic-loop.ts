@@ -17,6 +17,9 @@ import type { StructuralPipeline } from '../structural/index.js';
 import type { Indexer } from '../component-index/indexer.js';
 import type { TemporalEventStream } from '../temporal/event-stream.js';
 import type { PerceptionSession } from './session.js';
+import { createLogger } from '../../utils/logger.js';
+
+const logger = createLogger('PerceptionSemanticLoop');
 
 export interface SemanticLoopOptions {
   session: PerceptionSession;
@@ -42,6 +45,8 @@ export class SemanticLoop {
   private lastTickMs = 0;
   /** Whether stop() has been called. */
   private stopped = false;
+  /** Pending wake timer — tracked so stop() can clear it. */
+  private wakeTimer: ReturnType<typeof setTimeout> | null = null;
 
   private readonly escalateHandler: (payload: { from: string; regions: unknown[] }) => void;
 
@@ -69,6 +74,10 @@ export class SemanticLoop {
   stop(): void {
     this.stopped = true;
     this.session.internalEmitter.off('escalate', this.escalateHandler);
+    if (this.wakeTimer !== null) {
+      clearTimeout(this.wakeTimer);
+      this.wakeTimer = null;
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -79,7 +88,8 @@ export class SemanticLoop {
     const nowMs = Date.now();
     const elapsed = nowMs - this.lastTickMs;
     const delay = elapsed >= this.cadenceMs ? 0 : this.cadenceMs - elapsed;
-    setTimeout(() => {
+    this.wakeTimer = setTimeout(() => {
+      this.wakeTimer = null;
       if (this.stopped) return;
       if (!this.hasPendingEscalation) return;
       this.hasPendingEscalation = false;
@@ -93,45 +103,58 @@ export class SemanticLoop {
     const nowMs = Date.now();
     // Enforce cadence: if another tick ran too recently, skip.
     if (nowMs - this.lastTickMs < this.cadenceMs && this.lastTickMs !== 0) return;
-    this.lastTickMs = nowMs;
 
     this.session.recordTick('semantic', 'escalation', nowMs);
 
-    // Run the full structural + indexer pipeline.
-    const structural = await this.structuralPipeline.extractStructure(this.page);
-    const componentMap = await this.indexer.run(structural, {
-      origin: this.page.url(),
-    });
+    // I3 fix: previously the awaited body ran without a catch — a throw from
+    // extractStructure / indexer.run became an unhandled rejection AND
+    // lastTickMs was already advanced (silently gating out the next
+    // escalation). Now we only advance lastTickMs on success.
+    try {
+      const structural = await this.structuralPipeline.extractStructure(this.page);
+      const componentMap = await this.indexer.run(structural, {
+        origin: this.page.url(),
+      });
 
-    // Build a lookup from node id → structural node for bbox resolution.
-    const nodeById = new Map(structural.map((n) => [n.id, n]));
+      // Build a lookup from node id → structural node for bbox resolution.
+      const nodeById = new Map(structural.map((n) => [n.id, n]));
 
-    // Collect nodes the indexer marked as pending (unclassified).
-    const pendingRegions: Array<{ nodeId: string; bbox: { x: number; y: number; w: number; h: number } }> = [];
-    for (const [nodeId, field] of componentMap) {
-      if (field.name === null) {
-        const node = nodeById.get(nodeId);
-        const bb = node?.boundingBox ?? { x: 0, y: 0, width: 0, height: 0 };
-        pendingRegions.push({
-          nodeId,
-          bbox: { x: bb.x, y: bb.y, w: bb.width, h: bb.height },
-        });
+      // Collect nodes the indexer marked as pending (unclassified).
+      const pendingRegions: Array<{ nodeId: string; bbox: { x: number; y: number; w: number; h: number } }> = [];
+      for (const [nodeId, field] of componentMap) {
+        if (field.name === null) {
+          const node = nodeById.get(nodeId);
+          const bb = node?.boundingBox ?? { x: 0, y: 0, width: 0, height: 0 };
+          pendingRegions.push({
+            nodeId,
+            bbox: { x: bb.x, y: bb.y, w: bb.width, h: bb.height },
+          });
+        }
       }
+
+      // Tick succeeded — advance the cadence gate now (not before the await).
+      this.lastTickMs = nowMs;
+
+      if (pendingRegions.length === 0) return;
+
+      // Escalate to intent tier.
+      this.session.recordEscalation(
+        'semantic',
+        'intent',
+        'mutation-outside-animation',
+        pendingRegions,
+        nowMs,
+      );
+      this.session.internalEmitter.emit('escalate', {
+        from: 'semantic',
+        regions: pendingRegions,
+      });
+    } catch (err) {
+      logger.warn('SemanticLoop: tick failed; will retry on next escalation', {
+        error: err instanceof Error ? err.stack : String(err),
+      });
+      // lastTickMs intentionally not advanced — the next escalation that
+      // arrives can re-enter tick() without being gated out.
     }
-
-    if (pendingRegions.length === 0) return;
-
-    // Escalate to intent tier.
-    this.session.recordEscalation(
-      'semantic',
-      'intent',
-      'mutation-outside-animation',
-      pendingRegions,
-      nowMs,
-    );
-    this.session.internalEmitter.emit('escalate', {
-      from: 'semantic',
-      regions: pendingRegions,
-    });
   }
 }
