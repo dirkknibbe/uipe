@@ -98,6 +98,9 @@ export class IntentLoop {
   }
 
   private async drain(): Promise<void> {
+    // C1 belt-and-suspenders: skip even if a stale escalate kicked off a
+    // drain between `running = false` and `internalEmitter.off(...)` in stop().
+    if (!this.running) return;
     if (this.draining) return;
     if (this.pending.length === 0) return;
     this.draining = true;
@@ -110,9 +113,25 @@ export class IntentLoop {
         this.session.recordTick('intent', 'escalation', tickAt);
       }
 
-      const screenshot = await this.getScreenshot();
+      let screenshot: Buffer | null;
+      try {
+        screenshot = await this.getScreenshot();
+      } catch (err) {
+        // Silent-failure #5: a throwing screenshot provider previously
+        // escaped via `void this.drain()` with zero feedback.
+        logger.error('IntentLoop: screenshot provider threw; dropping pending queue', {
+          error: err instanceof Error ? err.stack : String(err),
+          dropped: this.pending.length,
+        });
+        this.pending = [];
+        return;
+      }
       if (!screenshot) {
-        // Can't classify without a screenshot — drop all pending.
+        // Can't classify without a screenshot — drop all pending. Log so the
+        // failure is visible; previously this branch was silent.
+        logger.warn('IntentLoop: screenshot provider returned null; dropping pending queue', {
+          dropped: this.pending.length,
+        });
         this.pending = [];
         return;
       }

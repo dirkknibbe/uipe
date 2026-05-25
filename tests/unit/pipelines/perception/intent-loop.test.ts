@@ -199,6 +199,96 @@ describe('IntentLoop', () => {
     expect(successful).toHaveLength(1);
   });
 
+  it('does not record intent results when stop() arrives during an in-flight classify (C1 regression lock for 4e53077 fix #5)', async () => {
+    const { session, stream } = mkSession();
+    await session.start(0);
+    let resolveClassify: (v: string) => void = () => {};
+    const classify = vi.fn(
+      () => new Promise<string>((r) => { resolveClassify = r; }),
+    );
+    const getScreenshot = vi.fn(async () => PNG);
+    const loop = new IntentLoop({
+      session,
+      eventStream: stream as unknown as TemporalEventStream,
+      getScreenshot,
+      classifyByVlm: classify,
+    });
+    loop.start();
+
+    session.internalEmitter.emit('escalate', {
+      from: 'semantic',
+      regions: [{ nodeId: 'a', bbox: { x: 0, y: 0, w: 10, h: 10 } }],
+    });
+
+    // Let the drain reach the classify await.
+    await Promise.resolve();
+    await Promise.resolve();
+
+    // Stop while the VLM call is in flight.
+    loop.stop();
+
+    // Now resolve the classify — the result must NOT be recorded.
+    resolveClassify('LateAnswer');
+    await new Promise((r) => setTimeout(r, 10));
+
+    expect(intentResultCalls(stream)).toHaveLength(0);
+  });
+
+  it('logs a warning when getScreenshot returns null instead of silently dropping the pending queue (silent-failure #5)', async () => {
+    const { session, stream } = mkSession();
+    await session.start(0);
+    const classify = vi.fn(async () => 'X');
+    const getScreenshot = vi.fn(async () => null);
+    const loop = new IntentLoop({ session, eventStream: stream as unknown as TemporalEventStream, getScreenshot, classifyByVlm: classify });
+
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    try {
+      loop.start();
+      session.internalEmitter.emit('escalate', {
+        from: 'semantic',
+        regions: [
+          { nodeId: 'a', bbox: { x: 0, y: 0, w: 10, h: 10 } },
+          { nodeId: 'b', bbox: { x: 20, y: 0, w: 10, h: 10 } },
+        ],
+      });
+      await new Promise((r) => setTimeout(r, 0));
+
+      const warned = logSpy.mock.calls.some((call) => {
+        const [prefix, message] = call;
+        return (
+          typeof prefix === 'string' &&
+          prefix.includes('[WARN]') &&
+          typeof message === 'string' &&
+          /screenshot/i.test(message)
+        );
+      });
+      expect(warned).toBe(true);
+    } finally {
+      logSpy.mockRestore();
+    }
+  });
+
+  it('drain() returns immediately when invoked after stop (belt-and-suspenders guard)', async () => {
+    const { session, stream } = mkSession();
+    await session.start(0);
+    const classify = vi.fn(async () => 'X');
+    const getScreenshot = vi.fn(async () => PNG);
+    const loop = new IntentLoop({ session, eventStream: stream as unknown as TemporalEventStream, getScreenshot, classifyByVlm: classify });
+    loop.start();
+
+    // Simulate the race: an enqueue happens, then stop runs, then a stale
+    // drain kicks. (We splice pending directly to model "post-stop pending"
+    // since the real onEscalate path is unsubscribed by stop().)
+    (loop as any).pending.push({ nodeId: 'a', bbox: { x: 0, y: 0, w: 10, h: 10 } });
+    loop.stop();
+    // Refill pending to simulate a queued item surviving stop.
+    (loop as any).pending.push({ nodeId: 'b', bbox: { x: 0, y: 0, w: 10, h: 10 } });
+
+    await (loop as any).drain();
+    expect(classify).not.toHaveBeenCalled();
+    expect(getScreenshot).not.toHaveBeenCalled();
+  });
+
   it('ignores escalation events whose from is not semantic', async () => {
     const { session, stream } = mkSession();
     await session.start(0);
