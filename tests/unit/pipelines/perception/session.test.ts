@@ -72,6 +72,23 @@ describe('PerceptionSession lifecycle', () => {
     }
   });
 
+  it('navigation-reset ticks do not skew averageCadenceMs.frame (I4 fix)', async () => {
+    await session.start(0);
+    // Steady 16 ms cadence
+    session.recordTick('frame', 'keyframe', 100);
+    session.recordTick('frame', 'keyframe', 116);
+    // Page navigation 5 s later — should not be counted as a sample interval.
+    session.recordTick('frame', 'navigation-reset', 5116);
+    // Resume steady cadence after nav
+    session.recordTick('frame', 'keyframe', 5132);
+    session.recordTick('frame', 'keyframe', 5148);
+
+    const s = session.getSummary();
+    // Without the fix, the ~5000ms gap dominates and average lands well above
+    // 1 s. With the fix, average stays near 16 ms (real-cadence samples only).
+    expect(s.averageCadenceMs.frame).toBeLessThan(50);
+  });
+
   it('recordTick increments tier count and emits perception-tick', async () => {
     await session.start(100);
     session.recordTick('frame', 'keyframe', 150);

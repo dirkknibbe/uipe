@@ -179,7 +179,12 @@ export class PerceptionSession {
   ): void {
     const t = this.ticks[tier];
     t.count += 1;
-    if (t.lastTimestamp !== null) {
+    // I4 fix: a `navigation-reset` tick marks a discontinuity (multi-second
+    // SPA route change) — counting its interval would dominate the cadence
+    // average and make the metric useless. Still bump count + update
+    // lastTimestamp (so the next real tick measures from after the nav),
+    // but skip the intervalSum/intervalCount aggregation.
+    if (t.lastTimestamp !== null && cause !== 'navigation-reset') {
       t.intervalSum += timestamp - t.lastTimestamp;
       t.intervalCount += 1;
     }
