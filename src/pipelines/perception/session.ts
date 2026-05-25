@@ -94,6 +94,7 @@ export class PerceptionSession {
   private escalationCount = 0;
   private intentResultCount = 0;
   private vlmCallCount = 0;
+  private vlmErrorCount = 0;
 
   constructor(options: PerceptionSessionOptions) {
     this.stream = options.eventStream;
@@ -239,6 +240,13 @@ export class PerceptionSession {
     });
   }
 
+  /** I2 fix: a 100%-failed session previously looked identical to a
+   *  no-escalation session because only successful VLM calls were counted.
+   *  Track errors separately so cost / health metrics are honest. */
+  recordVlmError(): void {
+    this.vlmErrorCount += 1;
+  }
+
   getSummary(): PerceptionSessionSummary {
     const now = this.state === 'running' ? Date.now() : this.stoppedAt;
     const durationMs = this.state === 'idle' ? 0 : now - this.startedAt;
@@ -269,7 +277,10 @@ export class PerceptionSession {
       anomaliesByReason,
       escalationCount: this.escalationCount,
       intentResultCount: this.intentResultCount,
-      vlmCalls: { count: this.vlmCallCount },
+      vlmCalls: {
+        count: this.vlmCallCount,
+        ...(this.vlmErrorCount > 0 ? { errorCount: this.vlmErrorCount } : {}),
+      },
     };
   }
 }

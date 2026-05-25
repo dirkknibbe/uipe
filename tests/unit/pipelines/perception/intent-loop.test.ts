@@ -199,6 +199,49 @@ describe('IntentLoop', () => {
     expect(successful).toHaveLength(1);
   });
 
+  it('records vlmCalls.errorCount and preserves error stack on classify failure (I2 fix)', async () => {
+    const { session, stream } = mkSession();
+    await session.start(0);
+    const classify = vi.fn(async () => { throw new Error('vlm-boom'); });
+    const getScreenshot = vi.fn(async () => PNG);
+    const loop = new IntentLoop({ session, eventStream: stream as unknown as TemporalEventStream, getScreenshot, classifyByVlm: classify });
+    loop.start();
+
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    try {
+      session.internalEmitter.emit('escalate', {
+        from: 'semantic',
+        regions: [
+          { nodeId: 'a', bbox: { x: 0, y: 0, w: 10, h: 10 } },
+          { nodeId: 'b', bbox: { x: 20, y: 0, w: 10, h: 10 } },
+        ],
+      });
+      await new Promise((r) => setTimeout(r, 0));
+
+      // Summary surfaces the error count (additive optional field).
+      const summary = session.getSummary();
+      expect(summary.vlmCalls.errorCount).toBe(2);
+
+      // Log call preserves the stack instead of collapsing to `Error: msg`.
+      const errorLog = logSpy.mock.calls.find((call) => {
+        const [prefix, message] = call;
+        return (
+          typeof prefix === 'string' &&
+          prefix.includes('[WARN]') &&
+          typeof message === 'string' &&
+          /classification failed/i.test(message)
+        );
+      });
+      expect(errorLog).toBeDefined();
+      const data = errorLog?.[2] as { error?: string };
+      expect(typeof data?.error).toBe('string');
+      // A real stack contains a frame; `String(new Error("x"))` is just `Error: x`.
+      expect(data!.error).toMatch(/\bat\b/);
+    } finally {
+      logSpy.mockRestore();
+    }
+  });
+
   it('does not record intent results when stop() arrives during an in-flight classify (C1 regression lock for 4e53077 fix #5)', async () => {
     const { session, stream } = mkSession();
     await session.start(0);

@@ -157,9 +157,13 @@ export class IntentLoop {
             );
           }
         } catch (err) {
+          // I2 fix: preserve stack so VLM timeouts / sharp crashes / model
+          // errors are distinguishable in logs. Also count the failure so
+          // a 100%-failed session is visible in the summary.
+          this.session.recordVlmError();
           logger.warn('IntentLoop: per-region classification failed, skipping', {
             nodeId: item.nodeId,
-            error: String(err),
+            error: err instanceof Error ? err.stack : String(err),
           });
         }
       }

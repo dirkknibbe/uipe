@@ -10,5 +10,5 @@ export interface PerceptionSessionSummary {
   anomaliesByReason: Record<AnomalyReason, number>;
   escalationCount: number;
   intentResultCount: number;
-  vlmCalls: { count: number; estimatedDollars?: number };
+  vlmCalls: { count: number; errorCount?: number; estimatedDollars?: number };
 }
