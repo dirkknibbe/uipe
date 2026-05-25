@@ -48,6 +48,30 @@ describe('PerceptionSession lifecycle', () => {
     expect(() => session.stop(100)).toThrow();
   });
 
+  it('onPageClose logs (does not silently swallow) when stop() raises (I1 fix)', async () => {
+    await session.start(100);
+
+    // Force stop() to throw to simulate a teardown error mid-close (e.g.,
+    // page.off() raising after the page already disconnected).
+    const stopSpy = vi.spyOn(session, 'stop').mockImplementation(() => {
+      throw new Error('teardown failed');
+    });
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    try {
+      const onPageClose = (session as any).onPageClose as () => void;
+      // Must not throw — the close handler is fired by Playwright sync.
+      expect(() => onPageClose()).not.toThrow();
+      const errored = logSpy.mock.calls.some((call) => {
+        const [prefix] = call;
+        return typeof prefix === 'string' && prefix.includes('[ERROR]');
+      });
+      expect(errored).toBe(true);
+    } finally {
+      logSpy.mockRestore();
+      stopSpy.mockRestore();
+    }
+  });
+
   it('recordTick increments tier count and emits perception-tick', async () => {
     await session.start(100);
     session.recordTick('frame', 'keyframe', 150);

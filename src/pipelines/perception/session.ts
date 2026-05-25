@@ -11,9 +11,12 @@ import type { PerceptionSessionSummary } from './types.js';
 import type { FrameCapture } from '../visual/frame-capture.js';
 import type { StructuralPipeline } from '../structural/index.js';
 import type { Indexer } from '../component-index/indexer.js';
+import { createLogger } from '../../utils/logger.js';
 import { FrameLoop } from './frame-loop.js';
 import { SemanticLoop } from './semantic-loop.js';
 import { IntentLoop, type ClassifyByVlmFn } from './intent-loop.js';
+
+const logger = createLogger('PerceptionSession');
 
 const TARGET_CADENCE_MS: Record<PerceptionTier, number> = {
   frame: 16,        // not actually used — frame is keyframe-bound; surfaced for inspection
@@ -63,8 +66,18 @@ export class PerceptionSession {
   };
 
   private readonly onPageClose = (): void => {
-    if (this.isRunning()) {
-      try { this.stop(Date.now()); } catch { /* already stopped */ }
+    if (!this.isRunning()) return;
+    try {
+      this.stop(Date.now());
+    } catch (err) {
+      // I1 fix: previously silently swallowed via `catch { /* already stopped */ }`.
+      // The comment was wrong — stop() does loop teardown + page.off() calls
+      // that can throw for reasons other than re-entrancy (e.g. TargetClosed).
+      // Playwright fires `close` listeners fire-and-forget, so re-throwing
+      // would become an unhandled exception; log instead.
+      logger.error('PerceptionSession: stop() failed during onPageClose', {
+        error: err instanceof Error ? err.stack : String(err),
+      });
     }
   };
 
