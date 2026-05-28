@@ -181,7 +181,12 @@ export class IntentLoop {
           // I2 fix: preserve stack so VLM timeouts / sharp crashes / model
           // errors are distinguishable in logs. Also count the failure so
           // a 100%-failed session is visible in the summary.
-          this.session.recordVlmError();
+          // P2-I1 fix: gate on this.running so a late rejection after stop()
+          // doesn't bump the metric on a torn-down session — mirroring the
+          // success-path guard on recordIntentResult.
+          if (this.running) {
+            this.session.recordVlmError();
+          }
           logger.warn('IntentLoop: per-region classification failed, skipping', {
             nodeId: item.nodeId,
             error: err instanceof Error ? err.stack : String(err),

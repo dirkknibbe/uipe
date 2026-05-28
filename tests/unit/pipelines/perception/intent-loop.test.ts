@@ -311,6 +311,50 @@ describe('IntentLoop', () => {
     }
   });
 
+  it('does not bump vlmCalls.errorCount when stop() arrives during an in-flight classify that later throws (P2-I1 fix)', async () => {
+    const { session, stream } = mkSession();
+    await session.start(0);
+    let rejectClassify: (e: Error) => void = () => {};
+    let classifyCalled: () => void = () => {};
+    const classifyEntered = new Promise<void>((r) => { classifyCalled = r; });
+    const classify = vi.fn(
+      () => new Promise<string>((_, rej) => {
+        rejectClassify = rej;
+        classifyCalled();
+      }),
+    );
+    const getScreenshot = vi.fn(async () => PNG);
+    const loop = new IntentLoop({
+      session,
+      eventStream: stream as unknown as TemporalEventStream,
+      getScreenshot,
+      classifyByVlm: classify,
+    });
+    const recordVlmErrorSpy = vi.spyOn(session, 'recordVlmError');
+    loop.start();
+
+    session.internalEmitter.emit('escalate', {
+      from: 'semantic',
+      regions: [{ nodeId: 'a', bbox: { x: 0, y: 0, w: 10, h: 10 } }],
+    });
+
+    // Wait for classify to actually be entered — only then is rejectClassify
+    // a real reject fn. Avoids the microtask-timing flake of Promise.resolve.
+    await classifyEntered;
+
+    // Stop while the VLM call is in flight.
+    loop.stop();
+
+    // Now make the in-flight classify REJECT. recordVlmError must NOT be
+    // called against a stopped session — mirroring how the success-path
+    // recordIntentResult is gated by !this.running.
+    rejectClassify(new Error('vlm-late-fail'));
+    await new Promise((r) => setTimeout(r, 10));
+
+    expect(recordVlmErrorSpy).not.toHaveBeenCalled();
+    expect(session.getSummary().vlmCalls.errorCount).toBeUndefined();
+  });
+
   it('logs when getScreenshot throws and does not produce an unhandled rejection (G1)', async () => {
     const { session, stream } = mkSession();
     await session.start(0);
