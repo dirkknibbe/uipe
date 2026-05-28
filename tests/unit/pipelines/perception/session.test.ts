@@ -72,6 +72,36 @@ describe('PerceptionSession lifecycle', () => {
     }
   });
 
+  it('vlmCalls.errorCount is absent when no errors have been recorded (G3)', async () => {
+    await session.start(0);
+    session.recordIntentResult({ nodeId: 'a', bbox: { x: 0, y: 0, w: 1, h: 1 } }, 'X', 5, 10);
+    const s = session.getSummary();
+    expect(s.vlmCalls.count).toBe(1);
+    // errorCount stays absent (not 0, not present) when there are no errors
+    // — keeps the conditional-spread contract stable.
+    expect('errorCount' in s.vlmCalls).toBe(false);
+  });
+
+  it('recordVlmError bumps the error count and surfaces it in the summary (G4)', async () => {
+    await session.start(0);
+    session.recordVlmError();
+    session.recordVlmError();
+    const s = session.getSummary();
+    expect(s.vlmCalls.errorCount).toBe(2);
+    // No successful calls — count stays 0.
+    expect(s.vlmCalls.count).toBe(0);
+  });
+
+  it('averageCadenceMs.frame is null when only navigation-reset ticks have fired (G5)', async () => {
+    await session.start(0);
+    session.recordTick('frame', 'navigation-reset', 100);
+    session.recordTick('frame', 'navigation-reset', 5100);
+    const s = session.getSummary();
+    // Without any real-cadence samples, the average must be null (not 0,
+    // not a stale interval from the discontinuity).
+    expect(s.averageCadenceMs.frame).toBeNull();
+  });
+
   it('navigation-reset ticks do not skew averageCadenceMs.frame (I4 fix)', async () => {
     await session.start(0);
     // Steady 16 ms cadence

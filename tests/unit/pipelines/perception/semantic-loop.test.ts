@@ -130,6 +130,31 @@ describe('SemanticLoop', () => {
     loop.stop();
   });
 
+  it('stop() calls clearTimeout on the pending wakeTimer (G6)', async () => {
+    const { session, stream } = mkSession();
+    await session.start(0);
+    const loop = new SemanticLoop({
+      session,
+      eventStream: stream as unknown as TemporalEventStream,
+      indexer: mkIndexer(new Map()),
+      structuralPipeline: mkStructural([]),
+      page: mkPage(),
+      config: { cadenceMs: 200 },
+    });
+    loop.start();
+    // Schedule a wake.
+    session.internalEmitter.emit('escalate', { from: 'frame', regions: [] });
+    expect((loop as any).wakeTimer).not.toBeNull();
+
+    const clearSpy = vi.spyOn(globalThis, 'clearTimeout');
+    const handle = (loop as any).wakeTimer;
+    loop.stop();
+
+    expect(clearSpy).toHaveBeenCalledWith(handle);
+    expect((loop as any).wakeTimer).toBeNull();
+    clearSpy.mockRestore();
+  });
+
   it('coalesces rapid scheduleWake calls into a single setTimeout (P2-I2 fix)', async () => {
     const { session, stream } = mkSession();
     await session.start(0);
