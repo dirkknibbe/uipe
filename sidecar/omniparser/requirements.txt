@@ -3,7 +3,10 @@ torchvision
 ultralytics
 transformers
 fastapi
+# Security floor — pin to avoid known CVEs even if `fastapi` resolves an older
+# transitive starlette. See `.review/security/` for the audit run.
+starlette>=1.0.1            # PYSEC-2026-161 (BadHost: request.url.path poisoning)
+python-multipart>=0.0.27    # CVE-2026-40347 + CVE-2026-42561 (multipart DoS)
 uvicorn
-python-multipart
 pillow
 huggingface_hub
