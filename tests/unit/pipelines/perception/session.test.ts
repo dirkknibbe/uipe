@@ -211,6 +211,46 @@ describe('PerceptionSession composed with loops', () => {
     session.stop(100);
   });
 
+  it('stop() runs all teardown steps even when one throws (P2-C2 fix)', async () => {
+    const deps = mkComposedDeps();
+    const session = new PerceptionSession({ eventStream: deps.stream });
+    await session.start(0, {
+      page: deps.page,
+      frameCapture: deps.frameCapture,
+      indexer: deps.indexer,
+      structuralPipeline: deps.structuralPipeline,
+      classifyByVlm: deps.classifyByVlm,
+      getScreenshot: deps.getScreenshot,
+    });
+
+    // Inject a throwing frameLoop.stop() to model TargetClosedError during teardown.
+    const frameLoopStop = vi.spyOn((session as any).frameLoop, 'stop')
+      .mockImplementation(() => { throw new Error('frameLoop teardown failed'); });
+    const semanticLoopStop = vi.spyOn((session as any).semanticLoop, 'stop');
+    const intentLoopStop = vi.spyOn((session as any).intentLoop, 'stop');
+
+    let thrown: unknown = null;
+    try { session.stop(100); } catch (e) { thrown = e; }
+
+    // All teardown steps must run regardless of the throw.
+    expect(frameLoopStop).toHaveBeenCalled();
+    expect(semanticLoopStop).toHaveBeenCalled();
+    expect(intentLoopStop).toHaveBeenCalled();
+    expect(deps.page.off).toHaveBeenCalledWith('framenavigated', expect.any(Function));
+    expect(deps.page.off).toHaveBeenCalledWith('close', expect.any(Function));
+
+    // Refs must all be nulled — session left in a coherent stopped state,
+    // not bricked half-way.
+    expect((session as any).frameLoop).toBeNull();
+    expect((session as any).semanticLoop).toBeNull();
+    expect((session as any).intentLoop).toBeNull();
+    expect((session as any).page).toBeNull();
+
+    // The underlying error is still surfaced (aggregated), not swallowed.
+    expect(thrown).toBeInstanceOf(Error);
+    expect((thrown as Error).message).toMatch(/frameLoop teardown failed/);
+  });
+
   it('stop() cleanly removes page listeners', async () => {
     const deps = mkComposedDeps();
     const session = new PerceptionSession({ eventStream: deps.stream });

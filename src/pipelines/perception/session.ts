@@ -145,18 +145,38 @@ export class PerceptionSession {
     }
     this.state = 'stopped';
     this.stoppedAt = nowMs;
-    this.frameLoop?.stop();
-    this.semanticLoop?.stop();
-    this.intentLoop?.stop();
+
+    // P2-C2: make teardown fault-tolerant. Previously a throw mid-stop
+    // (frameLoop teardown, page.off after TargetClosed, etc.) left loop
+    // refs non-null and listeners attached but state already flipped to
+    // 'stopped' — bricking the session for future restarts. Run every step,
+    // collect errors, surface them aggregated at the end so the caller
+    // still sees the failure but the session is reliably torn down.
+    const errors: Array<{ label: string; err: unknown }> = [];
+    const safeRun = (label: string, fn: () => void): void => {
+      try { fn(); } catch (err) { errors.push({ label, err }); }
+    };
+
+    safeRun('frameLoop.stop',    () => this.frameLoop?.stop());
+    safeRun('semanticLoop.stop', () => this.semanticLoop?.stop());
+    safeRun('intentLoop.stop',   () => this.intentLoop?.stop());
     this.frameLoop = null;
     this.semanticLoop = null;
     this.intentLoop = null;
     if (this.page) {
-      this.page.off('framenavigated', this.onPageNav);
-      this.page.off('close', this.onPageClose);
+      const page = this.page;
+      safeRun('page.off framenavigated', () => page.off('framenavigated', this.onPageNav));
+      safeRun('page.off close',          () => page.off('close',          this.onPageClose));
       this.page = null;
     }
     this.internalEmitter.removeAllListeners();
+
+    if (errors.length > 0) {
+      const summary = errors
+        .map(({ label, err }) => `${label}: ${err instanceof Error ? err.message : String(err)}`)
+        .join('; ');
+      throw new Error(`PerceptionSession.stop() partial failure: ${summary}`);
+    }
   }
 
   isRunning(): boolean {
