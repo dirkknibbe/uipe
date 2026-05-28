@@ -311,6 +311,73 @@ describe('IntentLoop', () => {
     }
   });
 
+  it('logs when getScreenshot throws and does not produce an unhandled rejection (G1)', async () => {
+    const { session, stream } = mkSession();
+    await session.start(0);
+    const classify = vi.fn(async () => 'X');
+    const getScreenshot = vi.fn(async () => { throw new Error('target closed'); });
+    const loop = new IntentLoop({ session, eventStream: stream as unknown as TemporalEventStream, getScreenshot, classifyByVlm: classify });
+
+    const unhandled: unknown[] = [];
+    const onUnhandled = (r: unknown) => unhandled.push(r);
+    process.on('unhandledRejection', onUnhandled);
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    try {
+      loop.start();
+      session.internalEmitter.emit('escalate', {
+        from: 'semantic',
+        regions: [{ nodeId: 'a', bbox: { x: 0, y: 0, w: 10, h: 10 } }],
+      });
+      await new Promise((r) => setTimeout(r, 0));
+
+      expect(unhandled).toEqual([]);
+      const errored = logSpy.mock.calls.some((c) => {
+        const [prefix, msg] = c;
+        return typeof prefix === 'string' && prefix.includes('[ERROR]') &&
+               typeof msg === 'string' && /screenshot/i.test(msg);
+      });
+      expect(errored).toBe(true);
+      expect(classify).not.toHaveBeenCalled();
+    } finally {
+      process.off('unhandledRejection', onUnhandled);
+      logSpy.mockRestore();
+    }
+  });
+
+  it('bounds error log volume when getScreenshot perma-throws (P2-C1 circuit breaker, G2)', async () => {
+    const { session, stream } = mkSession();
+    await session.start(0);
+    const classify = vi.fn(async () => 'X');
+    const getScreenshot = vi.fn(async () => { throw new Error('target closed'); });
+    const loop = new IntentLoop({ session, eventStream: stream as unknown as TemporalEventStream, getScreenshot, classifyByVlm: classify });
+
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    try {
+      loop.start();
+      // Fire 20 escalations; each kicks a drain that hits the throwing
+      // screenshot. Without bounding, this produces 20 ERROR lines.
+      for (let i = 0; i < 20; i++) {
+        session.internalEmitter.emit('escalate', {
+          from: 'semantic',
+          regions: [{ nodeId: `n-${i}`, bbox: { x: 0, y: 0, w: 10, h: 10 } }],
+        });
+        await new Promise((r) => setTimeout(r, 0));
+      }
+
+      const errorLogs = logSpy.mock.calls.filter((c) => {
+        const [prefix, msg] = c;
+        return typeof prefix === 'string' && prefix.includes('[ERROR]') &&
+               typeof msg === 'string' && /screenshot/i.test(msg);
+      });
+      // Circuit breaker bounds total per-failure ERROR lines to at most
+      // a small constant (threshold + the "suppressing" notice) regardless
+      // of how many escalations arrived.
+      expect(errorLogs.length).toBeLessThanOrEqual(5);
+    } finally {
+      logSpy.mockRestore();
+    }
+  });
+
   it('drain() returns immediately when invoked after stop (belt-and-suspenders guard)', async () => {
     const { session, stream } = mkSession();
     await session.start(0);

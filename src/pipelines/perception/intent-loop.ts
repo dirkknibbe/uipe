@@ -17,6 +17,12 @@ import type { PerceptionSession } from './session.js';
 
 const logger = createLogger('PerceptionIntentLoop');
 
+/** P2-C1: cap per-failure ERROR logs when getScreenshot perma-throws.
+ *  Above the threshold we emit one "suppressing further logs" notice and
+ *  then go silent on logging (but still drop pending). The streak resets
+ *  on the first successful screenshot. */
+const SCREENSHOT_ERROR_LOG_THRESHOLD = 3;
+
 // ---------------------------------------------------------------------------
 // Public types
 // ---------------------------------------------------------------------------
@@ -53,6 +59,7 @@ export class IntentLoop {
   private pending: PendingItem[] = [];
   private draining = false;
   private running = false;
+  private screenshotErrorStreak = 0;
 
   // Arrow function so we can pass it directly to on/off without binding.
   private readonly onEscalate = (payload: { from: string; regions: PendingItem[] }): void => {
@@ -117,12 +124,23 @@ export class IntentLoop {
       try {
         screenshot = await this.getScreenshot();
       } catch (err) {
-        // Silent-failure #5: a throwing screenshot provider previously
-        // escaped via `void this.drain()` with zero feedback.
-        logger.error('IntentLoop: screenshot provider threw; dropping pending queue', {
-          error: err instanceof Error ? err.stack : String(err),
-          dropped: this.pending.length,
-        });
+        // P2-C1: bound log volume so a perma-throwing screenshot provider
+        // doesn't spam ERROR per escalation for the rest of the session.
+        // Below threshold → normal error log. AT threshold+1 → one "suppressing"
+        // notice. Above → silent (still drops pending).
+        this.screenshotErrorStreak += 1;
+        if (this.screenshotErrorStreak <= SCREENSHOT_ERROR_LOG_THRESHOLD) {
+          logger.error('IntentLoop: screenshot provider threw; dropping pending queue', {
+            error: err instanceof Error ? err.stack : String(err),
+            dropped: this.pending.length,
+            streak: this.screenshotErrorStreak,
+          });
+        } else if (this.screenshotErrorStreak === SCREENSHOT_ERROR_LOG_THRESHOLD + 1) {
+          logger.error(
+            'IntentLoop: screenshot provider repeatedly throwing; suppressing further per-failure logs until next success',
+            { streak: this.screenshotErrorStreak },
+          );
+        }
         this.pending = [];
         return;
       }
@@ -135,6 +153,9 @@ export class IntentLoop {
         this.pending = [];
         return;
       }
+      // Screenshot succeeded — reset the error streak so future failures
+      // log normally again.
+      this.screenshotErrorStreak = 0;
 
       // Snapshot the queue and reset it so new arrivals during the drain
       // accumulate independently and trigger a follow-up drain.
