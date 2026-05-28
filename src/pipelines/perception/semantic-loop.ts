@@ -47,6 +47,12 @@ export class SemanticLoop {
   private stopped = false;
   /** Pending wake timer — tracked so stop() can clear it. */
   private wakeTimer: ReturnType<typeof setTimeout> | null = null;
+  /** P2-H1: blocks re-entrant tick() while a previous tick is still awaiting.
+   *  The cadence gate's `lastTickMs !== 0` carve-out is insufficient on the
+   *  very first tick — a second escalate arriving mid-await would otherwise
+   *  bypass the gate (lastTickMs is still 0 until success) and run
+   *  concurrently. */
+  private inFlight = false;
 
   private readonly escalateHandler: (payload: { from: string; regions: unknown[] }) => void;
 
@@ -85,6 +91,11 @@ export class SemanticLoop {
   // ---------------------------------------------------------------------------
 
   private scheduleWake(): void {
+    // P2-I2: coalesce. A burst of escalates in the same JS turn previously
+    // overwrote this.wakeTimer without clearing the prior handle, leaking
+    // Node timer references. The pending state (hasPendingEscalation) is
+    // already aggregated, so a second timer is just noise.
+    if (this.wakeTimer !== null) return;
     const nowMs = Date.now();
     const elapsed = nowMs - this.lastTickMs;
     const delay = elapsed >= this.cadenceMs ? 0 : this.cadenceMs - elapsed;
@@ -99,18 +110,22 @@ export class SemanticLoop {
 
   private async tick(): Promise<void> {
     if (this.stopped) return;
+    // P2-H1: prevent concurrent re-entry while a previous tick is still
+    // awaiting (the first-tick cadence carve-out is otherwise too permissive).
+    if (this.inFlight) return;
 
     const nowMs = Date.now();
     // Enforce cadence: if another tick ran too recently, skip.
     if (nowMs - this.lastTickMs < this.cadenceMs && this.lastTickMs !== 0) return;
 
-    this.session.recordTick('semantic', 'escalation', nowMs);
-
-    // I3 fix: previously the awaited body ran without a catch — a throw from
-    // extractStructure / indexer.run became an unhandled rejection AND
-    // lastTickMs was already advanced (silently gating out the next
-    // escalation). Now we only advance lastTickMs on success.
+    this.inFlight = true;
     try {
+      // I3 + P2-H2 fix: previously recordTick ran BEFORE the try, so a failed
+      // tick still bumped tickCounts.semantic ("ghost ticks"). Plus the
+      // awaited body had no catch — a throw from extractStructure /
+      // indexer.run became an unhandled rejection AND lastTickMs was already
+      // advanced (silently gating out the next escalation). Now both
+      // recordTick and lastTickMs advance only on success.
       const structural = await this.structuralPipeline.extractStructure(this.page);
       const componentMap = await this.indexer.run(structural, {
         origin: this.page.url(),
@@ -132,7 +147,9 @@ export class SemanticLoop {
         }
       }
 
-      // Tick succeeded — advance the cadence gate now (not before the await).
+      // Tick succeeded — record the tick + advance the cadence gate now
+      // (not before the await).
+      this.session.recordTick('semantic', 'escalation', nowMs);
       this.lastTickMs = nowMs;
 
       if (pendingRegions.length === 0) return;
@@ -153,8 +170,11 @@ export class SemanticLoop {
       logger.warn('SemanticLoop: tick failed; will retry on next escalation', {
         error: err instanceof Error ? err.stack : String(err),
       });
-      // lastTickMs intentionally not advanced — the next escalation that
-      // arrives can re-enter tick() without being gated out.
+      // tickCounts.semantic and lastTickMs intentionally not advanced — the
+      // next escalation can re-enter tick() without being gated out, and the
+      // summary doesn't record a tick that did no work.
+    } finally {
+      this.inFlight = false;
     }
   }
 }
