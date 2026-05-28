@@ -81,14 +81,29 @@ export class FrameLoop {
   // installPageObserver (target closed mid-nav, evaluate timeout, etc.)
   // would become an unhandled rejection AND leave the loop firing keyframes
   // with zero mutations arriving. Catch + log so the failure is observable.
+  //
+  // P2-N1: discriminate known Playwright races from genuinely unexpected
+  // errors. A `TargetClosed` mid-nav is expected and shouldn't trip alarms;
+  // a TypeError from a refactor bug should be loud.
   private readonly onFrameNavigated = async (): Promise<void> => {
     if (!this.page) return;
     try {
       await this.installPageObserver(this.page);
     } catch (err) {
-      logger.error('FrameLoop: failed to reinstall page-side observer after navigation', {
-        error: err instanceof Error ? err.stack : String(err),
-      });
+      const msg = err instanceof Error ? err.message : String(err);
+      const stack = err instanceof Error ? err.stack : String(err);
+      const isKnownPlaywrightRace =
+        /target.*closed/i.test(msg) ||
+        /execution context.*destroyed/i.test(msg);
+      if (isKnownPlaywrightRace) {
+        logger.warn('FrameLoop: observer reinstall raced with page lifecycle (expected during nav)', {
+          error: stack,
+        });
+      } else {
+        logger.error('FrameLoop: UNEXPECTED error reinstalling page-side observer after navigation', {
+          error: stack,
+        });
+      }
     }
   };
 

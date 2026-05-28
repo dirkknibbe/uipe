@@ -331,6 +331,59 @@ describe('FrameLoop page-side observer', () => {
     expect(ticks).toHaveLength(0);
   });
 
+  it('framenavigated logs known races (target closed) at WARN, not ERROR (P2-N1 fix)', async () => {
+    const { session, page, loop } = setupWithPage({ warmupMs: 0 });
+    await session.start(0);
+    await loop.start();
+    page.evaluate.mockRejectedValueOnce(new Error('Target page closed during nav'));
+
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    try {
+      page.emit('framenavigated');
+      await new Promise((r) => setImmediate(r));
+      await new Promise((r) => setImmediate(r));
+
+      const warned = logSpy.mock.calls.some((c) => {
+        const [prefix] = c;
+        return typeof prefix === 'string' && prefix.includes('[WARN]');
+      });
+      const errored = logSpy.mock.calls.some((c) => {
+        const [prefix] = c;
+        return typeof prefix === 'string' && prefix.includes('[ERROR]');
+      });
+      expect(warned).toBe(true);
+      expect(errored).toBe(false);
+    } finally {
+      logSpy.mockRestore();
+      loop.stop();
+    }
+  });
+
+  it('framenavigated logs unexpected errors at ERROR with UNEXPECTED prefix (P2-N1 fix)', async () => {
+    const { session, page, loop } = setupWithPage({ warmupMs: 0 });
+    await session.start(0);
+    await loop.start();
+    // Not a known Playwright race — programmer bug, exotic infra, etc.
+    page.evaluate.mockRejectedValueOnce(new TypeError("Cannot read properties of undefined (reading 'foo')"));
+
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    try {
+      page.emit('framenavigated');
+      await new Promise((r) => setImmediate(r));
+      await new Promise((r) => setImmediate(r));
+
+      const unexpectedError = logSpy.mock.calls.find((c) => {
+        const [prefix, msg] = c;
+        return typeof prefix === 'string' && prefix.includes('[ERROR]') &&
+               typeof msg === 'string' && /UNEXPECTED/i.test(msg);
+      });
+      expect(unexpectedError).toBeDefined();
+    } finally {
+      logSpy.mockRestore();
+      loop.stop();
+    }
+  });
+
   it('framenavigated reinstall errors are caught and logged, not unhandled rejections (C3 fix)', async () => {
     const { session, page, loop } = setupWithPage({ warmupMs: 0 });
     await session.start(0);
