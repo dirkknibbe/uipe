@@ -1,9 +1,39 @@
 torch
 torchvision
 ultralytics
-transformers
 fastapi
 uvicorn
-python-multipart
-pillow
 huggingface_hub
+
+# ---------------------------------------------------------------------------
+# Security floors — pin to drop known CVEs flagged by `pip-audit`. Floors
+# only (no upper bound) so future bumps are picked up automatically. Each
+# line carries the advisory + the version that fixes it.
+# ---------------------------------------------------------------------------
+
+# FastAPI ecosystem (direct attack surface — multipart UploadFile endpoint):
+starlette>=1.0.1            # PYSEC-2026-161  (BadHost: request.url.path poisoning)
+python-multipart>=0.0.27    # CVE-2026-40347 + CVE-2026-42561 (multipart DoS)
+
+# Image processing (user-controlled input → high priority):
+pillow>=12.2.0              # PYSEC-2026-165, CVE-2026-25990/40192/42309/42310/42311
+transformers>=4.53.0,<5     # PYSEC-2024-227/228/229, CVE-2024-12720,
+                            # CVE-2025-1194/3263/3264/3777/3933/5197
+
+# Transitive deps in the venv that pip-audit flagged:
+filelock>=3.20.3            # CVE-2025-68146, CVE-2026-22701
+idna>=3.15                  # CVE-2026-45409
+pygments>=2.20.0            # CVE-2026-4539
+requests>=2.33.0            # CVE-2026-25645   (insecure temp-file reuse)
+setuptools>=78.1.1          # CVE-2024-6345, PYSEC-2022-43012, PYSEC-2025-49
+urllib3>=2.7.0              # PYSEC-2026-141, PYSEC-2026-142
+
+# ---------------------------------------------------------------------------
+# Accepted-risk (not fixable on this venv — documented, not silenced):
+# - torch 2.2.2: 14 CVEs (fixes in 2.5.0+). No newer wheels for x86_64 macOS
+#   per project memory — pinned by hardware constraint. Mitigation:
+#   `weights_only=True` on every `torch.load`, never load untrusted weights.
+# - transformers PYSEC-2025-217: no fix version published upstream.
+# - transformers CVE-2026-1839: only fixed in 5.0.0rc3 (major bump that
+#   would require re-validating Florence-2 model loading). Defer.
+# ---------------------------------------------------------------------------
