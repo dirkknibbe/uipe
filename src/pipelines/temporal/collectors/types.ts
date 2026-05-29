@@ -12,7 +12,11 @@ export type EventType =
   | 'phash-change'
   | 'optical-flow-raw'
   | 'optical-flow-region'
-  | 'optical-flow-motion';
+  | 'optical-flow-motion'
+  | 'perception-tick'
+  | 'perception-anomaly'
+  | 'perception-escalation'
+  | 'perception-intent-result';
 
 export interface InputPayload {
   kind: 'click' | 'keydown';
@@ -139,6 +143,41 @@ export interface OpticalFlowMotionPayload {
   confidence: number;
 }
 
+export type PerceptionTier = 'frame' | 'semantic' | 'intent';
+
+export type AnomalyReason = 'mutation-outside-animation';
+
+export interface PerceptionTickPayload {
+  tier: PerceptionTier;
+  cause: 'keyframe' | 'heartbeat' | 'escalation' | 'navigation-reset';
+}
+
+export interface PerceptionAnomalyPayload {
+  tier: PerceptionTier;
+  reason: AnomalyReason;
+  detail: {
+    mutationCount: number;
+    targetNodeIds: string[];
+  };
+}
+
+export interface PerceptionEscalationPayload {
+  from: PerceptionTier;
+  to: PerceptionTier;
+  reason: AnomalyReason;
+  regions: Array<{
+    nodeId: string;
+    bbox: { x: number; y: number; w: number; h: number };
+  }>;
+}
+
+export interface PerceptionIntentResultPayload {
+  region: { nodeId: string; bbox: { x: number; y: number; w: number; h: number } };
+  classification: string;
+  classificationSource: 'vlm';
+  durationMs: number;
+}
+
 export type PayloadFor<T extends EventType> =
   T extends 'input'             ? InputPayload :
   T extends 'mutation'          ? MutationPayload :
@@ -151,6 +190,10 @@ export type PayloadFor<T extends EventType> =
   T extends 'optical-flow-raw'    ? OpticalFlowRawPayload :
   T extends 'optical-flow-region' ? OpticalFlowRegionPayload :
   T extends 'optical-flow-motion' ? OpticalFlowMotionPayload :
+  T extends 'perception-tick'           ? PerceptionTickPayload :
+  T extends 'perception-anomaly'        ? PerceptionAnomalyPayload :
+  T extends 'perception-escalation'     ? PerceptionEscalationPayload :
+  T extends 'perception-intent-result'  ? PerceptionIntentResultPayload :
   never;
 
 export interface TimelineEvent<T extends EventType = EventType> {
