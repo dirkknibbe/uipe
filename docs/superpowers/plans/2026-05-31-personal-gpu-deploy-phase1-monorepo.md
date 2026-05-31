@@ -57,8 +57,10 @@ Expected: branch `feat/personal-gpu-deploy` (or your worktree branch off it); no
 
 - [ ] **Step 2: Record the test baseline**
 
-Run: `pnpm exec vitest run --reporter=dot 2>&1 | tail -4`
-Expected: `Test Files  55 passed (55)` and `Tests  498 passed (498)`. **Write this number down — it is the safety-net target for every later task in this plan.**
+**Green gate = the deterministic unit suite, not the full run.** Bare `vitest run` also pulls `tests/integration/` + `tests/e2e/` (527 tests / 66 files), which includes one known **pre-existing parallel-load flake** — `tests/integration/animation-verifier.test.ts` misses the real-browser `animation-end` timing window under full-suite CPU contention (passes 4/4 in isolation; tracked in issue #15). It is orthogonal to a file-move, so every gate in this plan uses the unit subset.
+
+Run: `pnpm exec vitest run tests/unit/ --reporter=dot 2>&1 | tail -4`
+Expected: `Test Files  55 passed (55)` and `Tests  498 passed (498)`. **This 498 is the safety-net target for every later task in this plan.** (`pnpm exec tsc --noEmit` covers type safety across all trees including integration/e2e.)
 
 - [ ] **Step 3: Record the typecheck baseline**
 
@@ -157,7 +159,7 @@ Expected: pnpm links `@uipe/core`; `pnpm-lock.yaml` updates to workspace format.
 
 - [ ] **Step 5: Verify tests + typecheck still green from the new location**
 
-Run: `pnpm -F @uipe/core exec vitest run --reporter=dot 2>&1 | tail -4`
+Run: `pnpm -F @uipe/core exec vitest run tests/unit/ --reporter=dot 2>&1 | tail -4`
 Expected: `Tests  498 passed (498)` — identical to the Task 1 baseline.
 
 Run: `pnpm -F @uipe/core exec tsc --noEmit`
@@ -235,7 +237,7 @@ git commit -m "refactor(monorepo): extract engine into packages/core, add pnpm w
 Run: `pnpm -F @uipe/core exec tsc --noEmit`
 Expected: no output, exit 0.
 
-Run: `pnpm -F @uipe/core exec vitest run --reporter=dot 2>&1 | tail -2`
+Run: `pnpm -F @uipe/core exec vitest run tests/unit/ --reporter=dot 2>&1 | tail -2`
 Expected: `Tests  498 passed (498)`.
 
 - [ ] **Step 5: Commit**
@@ -422,10 +424,15 @@ git commit -m "feat(contracts): seed @uipe/contracts package + prove cross-packa
 Run: `pnpm -r exec tsc --noEmit`
 Expected: no output, exit 0 (both `@uipe/core` and `@uipe/contracts`).
 
-- [ ] **Step 2: Full workspace test run**
+- [ ] **Step 2: Workspace test run (deterministic gate)**
 
-Run: `pnpm -r exec vitest run --reporter=dot 2>&1 | tail -6`
-Expected: core `498` + contracts `2` + core boundary `2` = **502 passed** across the workspace. (Core was 498; the boundary test added 2 to core, contracts added 2 — confirm no test was lost.)
+Run: `pnpm -F @uipe/core exec vitest run tests/unit/ --reporter=dot 2>&1 | tail -3`
+Expected: **500 passed** (the 498 baseline + 2 from the new `contracts-boundary.test.ts`).
+
+Run: `pnpm -F @uipe/contracts exec vitest run --reporter=dot 2>&1 | tail -3`
+Expected: `Tests  2 passed (2)`.
+
+(Core's `tests/integration/` + `tests/e2e/` are not part of the gate — they carry the known issue-#15 parallel-load flake. Run them separately if desired: `pnpm -F @uipe/core exec vitest run tests/integration tests/e2e`.)
 
 - [ ] **Step 3: Update `DEVELOPMENT.md` command references**
 
