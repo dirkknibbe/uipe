@@ -119,7 +119,7 @@ Or from a local clone:
   "mcpServers": {
     "ui-perception-engine": {
       "command": "node",
-      "args": ["/path/to/uipe/ui-perception-engine/dist/src/mcp/index.js"],
+      "args": ["/path/to/uipe/ui-perception-engine/packages/core/dist/src/mcp/index.js"],
       "env": {
         "OLLAMA_URL": "http://localhost:11434",
         "OLLAMA_MODEL": "qwen3-vl:8b",
@@ -228,34 +228,41 @@ get_scene()
 ## Development
 
 ```bash
-pnpm test          # run tests
-pnpm test:watch    # watch mode
-pnpm lint          # lint
+# Root workspace (delegates to all packages via -r)
+pnpm test          # run all tests
 pnpm build         # compile TypeScript
-pnpm mcp           # start MCP server (after build)
-pnpm start:dev     # check services + start MCP server
+pnpm lint          # lint all packages
+
+# @uipe/core package only
+pnpm -F @uipe/core test:watch          # watch mode
+pnpm -F @uipe/core mcp                 # start MCP server (after build)
+pnpm -F @uipe/core start:dev           # check services + start MCP server
+pnpm -F @uipe/core exec vitest run --reporter=verbose  # verbose test output
 ```
 
 ## Architecture
 
 ```
-src/
-├── config.ts           ← centralized config (dotenv)
-├── types/              ← shared types (contracts between pipelines)
-├── browser/            ← BrowserRuntime (Playwright)
-├── pipelines/
-│   ├── structural/     ← DOM + a11y tree extraction
-│   ├── visual/
-│   │   ├── index.ts        ← Three-tier orchestrator (detect/understand/deep)
-│   │   ├── omniparser.ts   ← OmniParser V2 client (Tier A)
-│   │   ├── claude-vision.ts ← Claude Vision API (Tier C)
-│   │   ├── ollama-vision.ts ← Qwen3-VL via Ollama (Tier B)
-│   │   └── frame-capture.ts ← CDP screencast + perceptual hashing
-│   ├── fusion/         ← merge visual + structural → SceneGraph
-│   ├── temporal/       ← change detection + state tracking
-│   └── affordance/     ← predict interaction outcomes
-├── mcp/                ← MCP server (12 tools)
-└── utils/
+packages/
+├── contracts/          ← shared types (@uipe/contracts)
+└── core/               ← perception engine + MCP server (@uipe/core)
+    └── src/
+        ├── config.ts           ← centralized config (dotenv)
+        ├── types/              ← internal types
+        ├── browser/            ← BrowserRuntime (Playwright)
+        ├── pipelines/
+        │   ├── structural/     ← DOM + a11y tree extraction
+        │   ├── visual/
+        │   │   ├── index.ts        ← Three-tier orchestrator (detect/understand/deep)
+        │   │   ├── omniparser.ts   ← OmniParser V2 client (Tier A)
+        │   │   ├── claude-vision.ts ← Claude Vision API (Tier C)
+        │   │   ├── ollama-vision.ts ← Qwen3-VL via Ollama (Tier B)
+        │   │   └── frame-capture.ts ← CDP screencast + perceptual hashing
+        │   ├── fusion/         ← merge visual + structural → SceneGraph
+        │   ├── temporal/       ← change detection + state tracking
+        │   └── affordance/     ← predict interaction outcomes
+        ├── mcp/                ← MCP server (12 tools)
+        └── utils/
 ```
 
 **Viewport default:** 1280x720 (configurable via env)
