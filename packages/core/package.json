@@ -45,6 +45,7 @@
     "node": ">=18"
   },
   "dependencies": {
+    "@uipe/contracts": "workspace:*",
     "@anthropic-ai/sdk": "^0.39.0",
     "@modelcontextprotocol/sdk": "^1.27.1",
     "dotenv": "^16.4.0",
