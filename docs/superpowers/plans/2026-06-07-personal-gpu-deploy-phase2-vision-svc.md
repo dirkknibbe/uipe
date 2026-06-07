@@ -994,7 +994,10 @@ def build_default_app() -> FastAPI:
 
 
 # uvicorn entrypoint: `uvicorn app.main:app`
-app = None  # set lazily to avoid importing torch during unit tests
+# NB (corrected during implementation): do NOT define a module-level `app = None`.
+# PEP 562 module __getattr__ only fires for names NOT found by normal lookup, so a
+# real `app` global shadows this hook and uvicorn would import that value (None)
+# instead of building the app. Leaving `app` undefined makes access lazily build it.
 def __getattr__(name):  # module-level lazy attribute (PEP 562)
     if name == "app":
         return build_default_app()
