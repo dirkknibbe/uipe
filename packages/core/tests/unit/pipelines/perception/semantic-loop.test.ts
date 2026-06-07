@@ -468,6 +468,66 @@ describe('SemanticLoop', () => {
     expect(intentHandler).not.toHaveBeenCalled();
   });
 
+  it('resets inFlight after a failed tick so the next escalation can re-enter tick() (test gap C)', async () => {
+    const { session, stream } = mkSession();
+    await session.start(0);
+    // extractStructure throws on EVERY call. The finally{ inFlight = false } is
+    // load-bearing: if a refactor moved the reset into the success branch,
+    // inFlight would stay true after the first bad tick and the loop would
+    // deadlock — extractStructure would be called only once. Proving it's
+    // called twice proves the reset survived.
+    const extractStructure = vi.fn(async () => { throw new Error('extract-boom'); });
+    const structural = { extractStructure } as unknown as StructuralPipeline;
+    const loop = new SemanticLoop({
+      session,
+      eventStream: stream as unknown as TemporalEventStream,
+      indexer: mkIndexer(new Map()),
+      structuralPipeline: structural,
+      page: mkPage(),
+      config: { cadenceMs: 200 },
+    });
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    try {
+      loop.start();
+      session.internalEmitter.emit('escalate', { from: 'frame', regions: [] });
+      await vi.advanceTimersByTimeAsync(10);
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(extractStructure).toHaveBeenCalledTimes(1);
+
+      // Second escalation after the failed tick must re-enter (inFlight reset).
+      session.internalEmitter.emit('escalate', { from: 'frame', regions: [] });
+      await vi.advanceTimersByTimeAsync(10);
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(extractStructure).toHaveBeenCalledTimes(2);
+    } finally {
+      logSpy.mockRestore();
+      loop.stop();
+    }
+  });
+
+  it('stop() is a no-op for the wake timer when none is scheduled (G6 null-path)', async () => {
+    const { session, stream } = mkSession();
+    await session.start(0);
+    const loop = new SemanticLoop({
+      session,
+      eventStream: stream as unknown as TemporalEventStream,
+      indexer: mkIndexer(new Map()),
+      structuralPipeline: mkStructural([]),
+      page: mkPage(),
+      config: { cadenceMs: 200 },
+    });
+    loop.start();
+    // No escalation fired → no wake scheduled.
+    expect((loop as any).wakeTimer).toBeNull();
+    const clearSpy = vi.spyOn(globalThis, 'clearTimeout');
+    expect(() => loop.stop()).not.toThrow();
+    expect(clearSpy).not.toHaveBeenCalled();
+    expect((loop as any).wakeTimer).toBeNull();
+    clearSpy.mockRestore();
+  });
+
   it('stop() unsubscribes — escalations after stop are ignored', async () => {
     const { session, stream } = mkSession();
     await session.start(0);

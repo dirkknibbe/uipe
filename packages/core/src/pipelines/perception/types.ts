@@ -11,4 +11,8 @@ export interface PerceptionSessionSummary {
   escalationCount: number;
   intentResultCount: number;
   vlmCalls: { count: number; errorCount?: number; estimatedDollars?: number };
+  /** P3-I1: count of screenshot-acquisition failures (throw or null) in the
+   *  IntentLoop. Absent when none occurred; present so a perma-broken-screenshot
+   *  session is distinguishable from an idle one in post-mortem. */
+  screenshotErrors?: number;
 }

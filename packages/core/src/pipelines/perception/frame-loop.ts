@@ -92,7 +92,11 @@ export class FrameLoop {
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       const stack = err instanceof Error ? err.stack : String(err);
+      // P3-N1: prefer the structured error name (stable across Playwright
+      // versions + locales); fall back to the message regex only for errors
+      // that don't set a recognizable name (older Playwright, destroyed-context).
       const isKnownPlaywrightRace =
+        (err instanceof Error && err.name === 'TargetClosedError') ||
         /target.*closed/i.test(msg) ||
         /execution context.*destroyed/i.test(msg);
       if (isKnownPlaywrightRace) {

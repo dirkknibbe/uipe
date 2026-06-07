@@ -281,6 +281,43 @@ describe('PerceptionSession composed with loops', () => {
     expect((thrown as Error).message).toMatch(/frameLoop teardown failed/);
   });
 
+  it('stop() aggregates multiple teardown failures in order and preserves their causes (P3-I3, test gap B)', async () => {
+    const deps = mkComposedDeps();
+    const session = new PerceptionSession({ eventStream: deps.stream });
+    await session.start(0, {
+      page: deps.page,
+      frameCapture: deps.frameCapture,
+      indexer: deps.indexer,
+      structuralPipeline: deps.structuralPipeline,
+      classifyByVlm: deps.classifyByVlm,
+      getScreenshot: deps.getScreenshot,
+    });
+
+    // Two distinct teardown steps throw — a generic Error and a TypeError, so
+    // we can prove both the type and the per-step identity survive aggregation.
+    const frameErr = new Error('frameLoop boom');
+    const semanticErr = new TypeError('semanticLoop type boom');
+    vi.spyOn((session as any).frameLoop, 'stop').mockImplementation(() => { throw frameErr; });
+    vi.spyOn((session as any).semanticLoop, 'stop').mockImplementation(() => { throw semanticErr; });
+
+    let thrown: unknown = null;
+    try { session.stop(100); } catch (e) { thrown = e; }
+
+    expect(thrown).toBeInstanceOf(Error);
+    const err = thrown as Error;
+    // Grep-friendly step labels remain, in execution order.
+    expect(err.message).toMatch(/frameLoop\.stop:.*semanticLoop\.stop:/s);
+    // P3-I3: the underlying errors are preserved via `cause` (full stacks +
+    // original types), not collapsed to just their `.message` strings.
+    expect(Array.isArray(err.cause)).toBe(true);
+    const causes = err.cause as Array<{ label: string; err: unknown }>;
+    expect(causes.map((c) => c.label)).toEqual(['frameLoop.stop', 'semanticLoop.stop']);
+    expect(causes[0].err).toBe(frameErr);
+    expect(causes[1].err).toBe(semanticErr);
+    // The TypeError type survives — previously lost when only .message was kept.
+    expect(causes[1].err).toBeInstanceOf(TypeError);
+  });
+
   it('stop() cleanly removes page listeners', async () => {
     const deps = mkComposedDeps();
     const session = new PerceptionSession({ eventStream: deps.stream });

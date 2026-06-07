@@ -384,6 +384,34 @@ describe('FrameLoop page-side observer', () => {
     }
   });
 
+  it('classifies a TargetClosedError by err.name even when the message does not match the race regex (P3-N1)', async () => {
+    const { session, page, loop } = setupWithPage({ warmupMs: 0 });
+    await session.start(0);
+    await loop.start();
+    // A real Playwright TargetClosedError whose message text does NOT contain
+    // "target closed" / "execution context destroyed" — those strings drift
+    // across Playwright versions + locales, so only err.name reliably IDs it.
+    const targetClosed = new Error('Protocol error (Runtime.callFunctionOn): Session closed.');
+    targetClosed.name = 'TargetClosedError';
+    page.evaluate.mockRejectedValueOnce(targetClosed);
+
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    try {
+      page.emit('framenavigated');
+      await new Promise((r) => setImmediate(r));
+      await new Promise((r) => setImmediate(r));
+
+      const warned = logSpy.mock.calls.some((c) => typeof c[0] === 'string' && c[0].includes('[WARN]'));
+      const errored = logSpy.mock.calls.some((c) => typeof c[0] === 'string' && c[0].includes('[ERROR]'));
+      // Known race → WARN, not a false-alarm ERROR.
+      expect(warned).toBe(true);
+      expect(errored).toBe(false);
+    } finally {
+      logSpy.mockRestore();
+      loop.stop();
+    }
+  });
+
   it('framenavigated reinstall errors are caught and logged, not unhandled rejections (C3 fix)', async () => {
     const { session, page, loop } = setupWithPage({ warmupMs: 0 });
     await session.start(0);
