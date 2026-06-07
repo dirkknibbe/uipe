@@ -176,7 +176,11 @@ export class PerceptionSession {
       const summary = errors
         .map(({ label, err }) => `${label}: ${err instanceof Error ? err.message : String(err)}`)
         .join('; ');
-      throw new Error(`PerceptionSession.stop() partial failure: ${summary}`);
+      // P3-I3: keep the grep-friendly label summary in the message, but carry
+      // the underlying {label, err} records via `cause` so each step's original
+      // type and stack survive — onPageClose's logger can then point at the real
+      // failure site instead of this throw line. (Error cause: Node 16+/ES2022.)
+      throw new Error(`PerceptionSession.stop() partial failure: ${summary}`, { cause: errors });
     }
   }
 
