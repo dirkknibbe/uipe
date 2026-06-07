@@ -1,0 +1,69 @@
+{
+  "name": "@uipe/core",
+  "version": "0.1.0",
+  "description": "Perception layer for AI agents — fuses visual + structural + temporal data into a UI Scene Graph. MCP server for Claude.",
+  "type": "module",
+  "main": "dist/src/index.js",
+  "types": "dist/src/index.d.ts",
+  "bin": {
+    "uipe": "dist/src/mcp/index.js"
+  },
+  "files": [
+    "dist/src",
+    "README.md"
+  ],
+  "scripts": {
+    "bench:flow": "pnpm exec tsx bench/optical-flow-eval.ts",
+    "build": "tsc",
+    "mcp": "node dist/src/mcp/index.js",
+    "dev": "tsx src/index.ts",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "lint": "eslint src tests --ext .ts",
+    "setup:flow-model": "pnpm exec tsx scripts/download-flow-model.ts",
+    "start:dev": "bash scripts/start.sh",
+    "prepublishOnly": "pnpm run build"
+  },
+  "keywords": [
+    "mcp",
+    "ai-agent",
+    "ui-testing",
+    "web-scraping",
+    "playwright",
+    "scene-graph",
+    "claude",
+    "perception",
+    "browser-automation"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/dirkknibbe/uipe.git"
+  },
+  "license": "MIT",
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "@uipe/contracts": "workspace:*",
+    "@anthropic-ai/sdk": "^0.39.0",
+    "@modelcontextprotocol/sdk": "^1.27.1",
+    "dotenv": "^16.4.0",
+    "pixelmatch": "^7.1.0",
+    "playwright": "^1.51.0",
+    "pngjs": "^7.0.0",
+    "sharp": "^0.34.5",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/pngjs": "^6.0.5",
+    "@typescript-eslint/eslint-plugin": "^7.0.0",
+    "@typescript-eslint/parser": "^7.0.0",
+    "@vitest/coverage-v8": "^2.0.0",
+    "eslint": "^8.57.0",
+    "tsx": "^4.0.0",
+    "typescript": "^5.4.0",
+    "vitest": "^2.0.0"
+  }
+}

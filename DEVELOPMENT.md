@@ -1,12 +1,19 @@
 # Development
 
+## Monorepo layout
+
+pnpm workspace — engine in `packages/core` (`@uipe/core`), shared types in `packages/contracts` (`@uipe/contracts`).
+
 ## Commands
 
 | What | Command |
 |------|---------|
-| Type-check (ground truth) | `pnpm exec tsc --noEmit` |
-| Run all tests | `pnpm exec vitest run --reporter=verbose` |
-| Run single test | `pnpm exec vitest run tests/unit/path/file.test.ts --reporter=verbose` |
+| Type-check all packages | `pnpm -r exec -- tsc --noEmit` |
+| Type-check one package | `pnpm -F @uipe/core exec tsc --noEmit` |
+| Run unit gate (core) | `pnpm -F @uipe/core exec vitest run tests/unit/` |
+| Run tests verbose (core) | `pnpm -F @uipe/core exec vitest run --reporter=verbose` |
+| Run contracts tests | `pnpm -F @uipe/contracts exec vitest run --reporter=verbose` |
+| Run single test | `pnpm -F @uipe/core exec vitest run tests/unit/path/file.test.ts --reporter=verbose` |
 | Build | `pnpm run build` |
 | Start (checks services) | `pnpm start:dev` |
 
@@ -62,7 +69,7 @@ External services are mocked in unit tests — they don't need to be running. In
 
 ## VS Code
 
-After `tsconfig.json` changes, run **Cmd+Shift+P → "TypeScript: Restart TS Server"**. `pnpm exec tsc --noEmit` is the ground truth.
+After `tsconfig.json` changes, run **Cmd+Shift+P → "TypeScript: Restart TS Server"**. `pnpm -r exec -- tsc --noEmit` is the ground truth for the full workspace; `pnpm -F @uipe/core exec tsc --noEmit` for the engine alone.
 
 ## API key
 
