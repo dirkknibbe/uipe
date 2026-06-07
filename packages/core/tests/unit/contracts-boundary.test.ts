@@ -8,11 +8,11 @@ describe('@uipe/contracts boundary', () => {
 
   it('VisionAnalyzeRequest shape is usable from core', () => {
     const req: VisionAnalyzeRequest = {
-      apiVersion: 'v1',
-      pngBase64: 'iVBORw0KGgo=',
+      api_version: 'v1',
+      png_base64: 'iVBORw0KGgo=',
       regions: [{ x: 0, y: 0, w: 10, h: 10 }],
     };
-    expect(req.apiVersion).toBe('v1');
+    expect(req.api_version).toBe('v1');
     expect(req.regions).toHaveLength(1);
   });
 });
