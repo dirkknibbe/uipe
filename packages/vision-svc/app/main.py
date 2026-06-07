@@ -75,3 +75,21 @@ def create_app(analyzer: Analyzer, timeout_s: float | None = None) -> FastAPI:
             )
 
     return app
+
+
+def build_default_app() -> FastAPI:
+    from app.qwen import QwenAnalyzer
+    cfg = Config.from_env(__import__("os").environ)
+    return create_app(QwenAnalyzer(cfg))
+
+
+# uvicorn entrypoint: `uvicorn app.main:app`
+# NB: intentionally NO module-level `app = ...` global here. PEP 562 module
+# __getattr__ only fires for names not found by normal lookup; defining `app`
+# would shadow this hook and uvicorn would import that value instead of building
+# the app. Leaving `app` undefined makes access lazily build it (and keeps torch
+# out of the import path during unit tests).
+def __getattr__(name):  # module-level lazy attribute (PEP 562)
+    if name == "app":
+        return build_default_app()
+    raise AttributeError(name)
