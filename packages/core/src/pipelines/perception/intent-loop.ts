@@ -104,6 +104,30 @@ export class IntentLoop {
     }
   }
 
+  /** P3-I1/I2: handle a screenshot-acquisition failure uniformly for both the
+   *  throw and null paths. Counts it in the session summary (gated on running,
+   *  mirroring recordVlmError), advances the shared suppression streak, bounds
+   *  per-failure log volume (P2-C1 circuit breaker), and drops the pending
+   *  queue. `detail` is supplied by the caller and must be read BEFORE pending
+   *  is cleared. */
+  private handleScreenshotFailure(
+    level: 'error' | 'warn',
+    message: string,
+    detail: Record<string, unknown>,
+  ): void {
+    if (this.running) this.session.recordScreenshotError();
+    this.screenshotErrorStreak += 1;
+    if (this.screenshotErrorStreak <= SCREENSHOT_ERROR_LOG_THRESHOLD) {
+      logger[level](message, { ...detail, streak: this.screenshotErrorStreak });
+    } else if (this.screenshotErrorStreak === SCREENSHOT_ERROR_LOG_THRESHOLD + 1) {
+      logger[level](
+        'IntentLoop: screenshot provider repeatedly failing; suppressing further per-failure logs until next success',
+        { streak: this.screenshotErrorStreak },
+      );
+    }
+    this.pending = [];
+  }
+
   private async drain(): Promise<void> {
     // C1 belt-and-suspenders: skip even if a stale escalate kicked off a
     // drain between `running = false` and `internalEmitter.off(...)` in stop().
@@ -124,33 +148,25 @@ export class IntentLoop {
       try {
         screenshot = await this.getScreenshot();
       } catch (err) {
-        // P2-C1: bound log volume so a perma-throwing screenshot provider
-        // doesn't spam ERROR per escalation for the rest of the session.
-        // Below threshold → normal error log. AT threshold+1 → one "suppressing"
-        // notice. Above → silent (still drops pending).
-        this.screenshotErrorStreak += 1;
-        if (this.screenshotErrorStreak <= SCREENSHOT_ERROR_LOG_THRESHOLD) {
-          logger.error('IntentLoop: screenshot provider threw; dropping pending queue', {
-            error: err instanceof Error ? err.stack : String(err),
-            dropped: this.pending.length,
-            streak: this.screenshotErrorStreak,
-          });
-        } else if (this.screenshotErrorStreak === SCREENSHOT_ERROR_LOG_THRESHOLD + 1) {
-          logger.error(
-            'IntentLoop: screenshot provider repeatedly throwing; suppressing further per-failure logs until next success',
-            { streak: this.screenshotErrorStreak },
-          );
-        }
-        this.pending = [];
+        // P2-C1 + P3-I1/I2: count the failure, bound per-failure logs so a
+        // perma-throwing provider doesn't spam ERROR for the rest of the
+        // session, and drop pending. dropped count is read before clearing.
+        this.handleScreenshotFailure(
+          'error',
+          'IntentLoop: screenshot provider threw; dropping pending queue',
+          { error: err instanceof Error ? err.stack : String(err), dropped: this.pending.length },
+        );
         return;
       }
       if (!screenshot) {
-        // Can't classify without a screenshot — drop all pending. Log so the
-        // failure is visible; previously this branch was silent.
-        logger.warn('IntentLoop: screenshot provider returned null; dropping pending queue', {
-          dropped: this.pending.length,
-        });
-        this.pending = [];
+        // P3-I2: a null screenshot is a failure too — route it through the same
+        // handler so it shares the suppression streak (previously null neither
+        // incremented nor reset the streak, making the signal misleading).
+        this.handleScreenshotFailure(
+          'warn',
+          'IntentLoop: screenshot provider returned null; dropping pending queue',
+          { dropped: this.pending.length },
+        );
         return;
       }
       // Screenshot succeeded — reset the error streak so future failures

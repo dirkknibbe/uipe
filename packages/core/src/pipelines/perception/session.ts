@@ -95,6 +95,7 @@ export class PerceptionSession {
   private intentResultCount = 0;
   private vlmCallCount = 0;
   private vlmErrorCount = 0;
+  private screenshotErrorCount = 0;
 
   constructor(options: PerceptionSessionOptions) {
     this.stream = options.eventStream;
@@ -272,6 +273,14 @@ export class PerceptionSession {
     this.vlmErrorCount += 1;
   }
 
+  /** P3-I1: mirror recordVlmError for screenshot-acquisition failures (throw
+   *  or null) in the IntentLoop. Always incremented — independent of the loop's
+   *  per-failure log circuit breaker — so the summary reflects a silently
+   *  degraded session instead of looking idle. */
+  recordScreenshotError(): void {
+    this.screenshotErrorCount += 1;
+  }
+
   getSummary(): PerceptionSessionSummary {
     const now = this.state === 'running' ? Date.now() : this.stoppedAt;
     const durationMs = this.state === 'idle' ? 0 : now - this.startedAt;
@@ -306,6 +315,7 @@ export class PerceptionSession {
         count: this.vlmCallCount,
         ...(this.vlmErrorCount > 0 ? { errorCount: this.vlmErrorCount } : {}),
       },
+      ...(this.screenshotErrorCount > 0 ? { screenshotErrors: this.screenshotErrorCount } : {}),
     };
   }
 }

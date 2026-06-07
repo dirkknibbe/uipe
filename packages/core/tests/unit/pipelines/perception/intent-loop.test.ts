@@ -459,4 +459,102 @@ describe('IntentLoop', () => {
     await new Promise((r) => setTimeout(r, 0));
     expect(classify).not.toHaveBeenCalled();
   });
+
+  it('counts every screenshot failure in summary.screenshotErrors, even past the log gate (P3-I1)', async () => {
+    const { session, stream } = mkSession();
+    await session.start(0);
+    const classify = vi.fn(async () => 'X');
+    const getScreenshot = vi.fn(async () => { throw new Error('target closed'); });
+    const loop = new IntentLoop({ session, eventStream: stream as unknown as TemporalEventStream, getScreenshot, classifyByVlm: classify });
+
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    try {
+      loop.start();
+      // Fire 7 escalations (> the log threshold of 3) against a perma-throwing
+      // screenshot provider. The per-failure log is bounded by the circuit
+      // breaker, but the summary metric must count ALL of them — a permanently
+      // broken-screenshot session must not look identical to an idle one.
+      for (let i = 0; i < 7; i++) {
+        session.internalEmitter.emit('escalate', {
+          from: 'semantic',
+          regions: [{ nodeId: `n-${i}`, bbox: { x: 0, y: 0, w: 10, h: 10 } }],
+        });
+        await new Promise((r) => setTimeout(r, 0));
+      }
+      expect(session.getSummary().screenshotErrors).toBe(7);
+    } finally {
+      logSpy.mockRestore();
+    }
+  });
+
+  it('treats a null screenshot as a streak failure: bounds null-path log volume and counts it (P3-I2)', async () => {
+    const { session, stream } = mkSession();
+    await session.start(0);
+    const classify = vi.fn(async () => 'X');
+    const getScreenshot = vi.fn(async () => null);
+    const loop = new IntentLoop({ session, eventStream: stream as unknown as TemporalEventStream, getScreenshot, classifyByVlm: classify });
+
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    try {
+      loop.start();
+      // 20 escalations against a perma-null screenshot. Before the fix the null
+      // path logged WARN every single time (unbounded) and never touched the
+      // streak. After the fix it shares the throw path's suppression streak, so
+      // log volume is bounded and every failure is counted.
+      for (let i = 0; i < 20; i++) {
+        session.internalEmitter.emit('escalate', {
+          from: 'semantic',
+          regions: [{ nodeId: `n-${i}`, bbox: { x: 0, y: 0, w: 10, h: 10 } }],
+        });
+        await new Promise((r) => setTimeout(r, 0));
+      }
+      const screenshotLogs = logSpy.mock.calls.filter((c) => {
+        const [prefix, msg] = c;
+        return typeof prefix === 'string' && typeof msg === 'string' && /screenshot/i.test(msg);
+      });
+      expect(screenshotLogs.length).toBeLessThanOrEqual(5);
+      expect(session.getSummary().screenshotErrors).toBe(20);
+    } finally {
+      logSpy.mockRestore();
+    }
+  });
+
+  it('resets the screenshot error streak on a successful screenshot so later failures log again (test gap A)', async () => {
+    const { session, stream } = mkSession();
+    await session.start(0);
+    const classify = vi.fn(async () => 'X');
+    // Sequence: throw x4 (exhausts threshold=3 + the suppression notice, so a
+    // 5th would be silent), then ONE success (call 5) which must reset the
+    // streak, then throw again (call 6) which must log at ERROR afresh.
+    let call = 0;
+    const getScreenshot = vi.fn(async () => {
+      call += 1;
+      if (call === 5) return PNG; // success resets the streak
+      throw new Error('target closed');
+    });
+    const loop = new IntentLoop({ session, eventStream: stream as unknown as TemporalEventStream, getScreenshot, classifyByVlm: classify });
+
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    try {
+      loop.start();
+      for (let i = 0; i < 6; i++) {
+        session.internalEmitter.emit('escalate', {
+          from: 'semantic',
+          regions: [{ nodeId: `n-${i}`, bbox: { x: 0, y: 0, w: 10, h: 10 } }],
+        });
+        await new Promise((r) => setTimeout(r, 0));
+      }
+      const errorScreenshotLogs = logSpy.mock.calls.filter((c) => {
+        const [prefix, msg] = c;
+        return typeof prefix === 'string' && prefix.includes('[ERROR]') &&
+               typeof msg === 'string' && /screenshot/i.test(msg);
+      });
+      // Run 1 (calls 1-4): 3 per-failure ERROR + 1 suppression ERROR = 4.
+      // Run 2 (call 6, after the reset): 1 fresh ERROR. Without the reset,
+      // call 6 would be streak=6 → silent → only 4 total.
+      expect(errorScreenshotLogs.length).toBe(5);
+    } finally {
+      logSpy.mockRestore();
+    }
+  });
 });
