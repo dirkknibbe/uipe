@@ -1,7 +1,9 @@
-import { resolve } from 'node:path';
+import { dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { existsSync } from 'node:fs';
 import { spawn } from 'node:child_process';
 import { EventEmitter } from 'node:events';
+import { resolveFlowBinaryPath } from '../src/utils/flow-binary.js';
 import { FlowProducer } from '../src/pipelines/temporal/producers/optical-flow.js';
 import { FlowCollector } from '../src/pipelines/temporal/collectors/optical-flow.js';
 import { TemporalEventStream } from '../src/pipelines/temporal/event-stream.js';
@@ -113,7 +115,10 @@ function percentile(arr: number[], p: number): number {
 }
 
 async function main(): Promise<void> {
-  const bin = resolve(process.cwd(), 'target/release/uipe-vision');
+  const bin = resolveFlowBinaryPath(
+    process.env,
+    dirname(fileURLToPath(import.meta.url)),
+  );
   if (!existsSync(bin)) {
     console.error(`Binary missing: ${bin}. Run 'pnpm run build:rust' first.`);
     process.exit(1);

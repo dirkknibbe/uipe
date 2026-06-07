@@ -1,6 +1,7 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
-import { resolve } from 'node:path';
+import { dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { existsSync } from 'node:fs';
 import { EventEmitter } from 'node:events';
 import { BrowserRuntime } from '../browser/runtime.js';
@@ -24,6 +25,7 @@ import {
 import { FlowProducer } from '../pipelines/temporal/producers/optical-flow.js';
 import { FlowCollector } from '../pipelines/temporal/collectors/optical-flow.js';
 import { createLogger } from '../utils/logger.js';
+import { resolveFlowBinaryPath } from '../utils/flow-binary.js';
 import type { Collector } from '../pipelines/temporal/collectors/types.js';
 import { makeGetTimelineTool } from './tools/get-timeline.js';
 import { ComponentIndexStore } from '../pipelines/component-index/store.js';
@@ -40,8 +42,10 @@ import {
 } from './tools/perception.js';
 
 const log = createLogger('mcp-server');
-const FLOW_BINARY_PATH = process.env.UIPE_FLOW_BINARY ??
-  resolve(process.cwd(), 'target/release/uipe-vision');
+const FLOW_BINARY_PATH = resolveFlowBinaryPath(
+  process.env,
+  dirname(fileURLToPath(import.meta.url)),
+);
 
 export interface ServerConfig {
   visual?: VisualPipelineConfig;
