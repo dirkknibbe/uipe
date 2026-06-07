@@ -1,0 +1,10 @@
+# The CUDA image only needs requirements.txt + app/ (see Dockerfile).
+# Keep the Fly build context small so deploys upload fast.
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+*.egg-info/
+tests/
+bench/
+.gitignore

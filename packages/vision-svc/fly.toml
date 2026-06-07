@@ -1,0 +1,15 @@
+app = "uipe-vision-svc-bench"
+primary_region = "ord"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[http_service]
+  internal_port = 8000
+  auto_stop_machines = true
+  auto_start_machines = true
+  min_machines_running = 0
+
+[[vm]]
+  size = "a10"
+  memory = "16gb"

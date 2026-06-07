@@ -1,0 +1,4 @@
+Here are the detected elements:
+```json
+[{"label": "link", "confidence": 0.71, "bbox": {"x": 5, "y": 5, "w": 50, "h": 18}}]
+```

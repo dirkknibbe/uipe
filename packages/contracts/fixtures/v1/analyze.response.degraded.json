@@ -1,0 +1,5 @@
+{
+  "api_version": "v1", "request_id": "req-123", "status": "degraded",
+  "elements": [], "model_id": "Qwen/Qwen2.5-VL-7B-Instruct", "latency_ms": 8000,
+  "reason": "inference_timeout", "retry_after_ms": 1000, "message": "TimeoutError: inference exceeded 8s"
+}
