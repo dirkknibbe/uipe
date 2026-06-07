@@ -1,0 +1,1 @@
+[{"label": "button", "confidence": 0.94, "bbox": {"x": 12, "y": 40, "w": 88, "h": 32}, "text": "Submit", "is_interactable": true}, {"label": "input", "confidence": 0.8, "bbox": {"x": 0, "y": 0, "w": 200, "h": 30}}]
