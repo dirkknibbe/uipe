@@ -78,8 +78,16 @@ def create_app(analyzer: Analyzer, timeout_s: float | None = None) -> FastAPI:
 
 
 def build_default_app() -> FastAPI:
+    import os
+
+    cfg = Config.from_env(os.environ)
+    backend = os.environ.get("VISION_BACKEND", "qwen")
+    if backend == "hosted":
+        from app.hosted import HostedApiAnalyzer  # no torch — runs anywhere
+
+        return create_app(HostedApiAnalyzer(cfg))
     from app.qwen import QwenAnalyzer
-    cfg = Config.from_env(__import__("os").environ)
+
     return create_app(QwenAnalyzer(cfg))
 
 
