@@ -9,11 +9,11 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Build and validate the Qwen2.5-VL "analyze" vertical slice — a Python `vision-svc` serving `/v1/analyze`, the pinned `@uipe/contracts` `/v1` schema it speaks, and a real-GPU benchmark/eval on an ephemeral Fly A10 that confirms Qwen on real UIPE screenshots.
+**Goal:** Build and validate the Qwen2.5-VL "analyze" vertical slice — a Python `vision-svc` serving `/v1/analyze`, the pinned `@uipe/contracts` `/v1` schema it speaks, and a real-GPU benchmark/eval on the chosen substrate (see the [substrate-pivot amendment](../specs/2026-06-08-phase2-substrate-pivot-amendment.md)) that confirms Qwen on real UIPE screenshots.
 
-**Architecture:** A new Python FastAPI service (`packages/vision-svc/`) loads Qwen2.5-VL-7B and exposes `POST /v1/analyze` + `GET /v1/health`. The wire contract lives in `@uipe/contracts` and is enforced cross-language by shared JSON fixtures (TS+zod consumer side, Pydantic producer side). Failures are classified by control-flow position and exception type into a small `status`/`reason` enum — never by parsing error strings. The model runs only on an ephemeral A10 spun up for the bench/eval and torn down after.
+**Architecture:** A new Python FastAPI service (`packages/vision-svc/`) loads Qwen2.5-VL-7B and exposes `POST /v1/analyze` + `GET /v1/health`. The wire contract lives in `@uipe/contracts` and is enforced cross-language by shared JSON fixtures (TS+zod consumer side, Pydantic producer side). Failures are classified by control-flow position and exception type into a small `status`/`reason` enum — never by parsing error strings. The model runs on the chosen GPU substrate (hosted API / Modal / 3090 — see the [substrate-pivot amendment](../specs/2026-06-08-phase2-substrate-pivot-amendment.md)); the contract + mapping tests need no GPU.
 
-**Tech Stack:** TypeScript + zod + vitest (contracts); Python 3.11 + FastAPI + Pydantic v2 + pytest (vision-svc); transformers + torch (CUDA) for Qwen2.5-VL; Fly.io A10 GPU; Docker (CUDA base).
+**Tech Stack:** TypeScript + zod + vitest (contracts); Python 3.11 + FastAPI + Pydantic v2 + pytest (vision-svc); transformers + torch (CUDA) for Qwen2.5-VL; a 24 GB CUDA GPU substrate (Modal / used 3090) or a hosted VLM API — see the amendment; Docker (CUDA base).
 
 **Spec:** [`docs/superpowers/specs/2026-06-07-personal-gpu-deploy-phase2-vision-svc-design.md`](../specs/2026-06-07-personal-gpu-deploy-phase2-vision-svc-design.md)
 
@@ -35,7 +35,7 @@
 - `app/__init__.py`, `app/config.py`, `app/schema.py`, `app/mapping.py`, `app/qwen.py`, `app/main.py`
 - `bench/scoring.py`, `bench/run_bench.py`, `bench/golden/` (screenshots + `expected/*.json`)
 - `tests/test_schema_fixtures.py`, `tests/test_mapping.py`, `tests/test_analyze_handler.py`, `tests/test_scoring.py`, `tests/fixtures/qwen_raw/*.txt`
-- `Dockerfile`, `fly.toml`
+- `Dockerfile` (portable CUDA reference image; per-substrate config lives in the [amendment](../specs/2026-06-08-phase2-substrate-pivot-amendment.md) §4, not `fly.toml`)
 
 Each file has one responsibility: `schema.py` = wire DTOs; `mapping.py` = Qwen-text → DTO (the only model-format-aware code); `qwen.py` = model load+infer; `main.py` = transport + the classification ladder; `bench/scoring.py` = pure metrics; `bench/run_bench.py` = the eval runner.
 
@@ -889,7 +889,7 @@ git commit -m "feat(vision-svc): /v1/analyze handler with status/reason classifi
 **Files:**
 - Create: `packages/vision-svc/app/qwen.py`
 
-> This code runs ONLY on the A10 — it cannot be unit-tested on the Mac. It is validated by the golden eval (Task 12). Before relying on the exact transformers API below, verify it against the current Qwen2.5-VL model card (transformers ≥4.49 introduced `Qwen2_5_VLForConditionalGeneration`); the processor/`generate` surface shifts between releases. (Offer: a context7 lookup of "Qwen2.5-VL transformers usage" at implementation time.)
+> This code runs ONLY on a CUDA GPU substrate (Modal / 3090) — it cannot be unit-tested on the Mac. It is validated by the golden eval (Task 12′). Before relying on the exact transformers API below, verify it against the current Qwen2.5-VL model card (transformers ≥4.49 introduced `Qwen2_5_VLForConditionalGeneration`); the processor/`generate` surface shifts between releases. (Offer: a context7 lookup of "Qwen2.5-VL transformers usage" at implementation time.)
 
 - [ ] **Step 1: Write `app/qwen.py`**
 
@@ -1154,10 +1154,11 @@ For each screenshot, hand-write `expected/<name>.json` — the elements you'd ex
 
 ```python
 """Unit-0-lite: POST each golden screenshot to a running /v1/analyze, score the
-result against the hand-labeled expectations, print a scorecard. Run against an
-ephemeral Fly A10 deploy (Task 12) — dogfoods the real contract + serve path.
+result against the hand-labeled expectations, print a scorecard. Run against the
+chosen GPU substrate (Modal / 3090) or a hosted VLM API — dogfoods the real
+contract + serve path. See docs substrate-pivot amendment, Task 12'.
 
-Usage: python bench/run_bench.py --base-url https://<app>.fly.dev
+Usage: python bench/run_bench.py --base-url <substrate-url-or-localhost>
 """
 import argparse
 import base64
@@ -1272,5 +1273,5 @@ git commit -m "feat(vision-svc): golden set + run_bench.py eval runner + runbook
 - `pnpm -F @uipe/contracts exec vitest run` green; `pnpm -r exec -- tsc --noEmit` clean.
 - `cd packages/vision-svc && python -m pytest` green (config, schema-fixtures, mapping, handler, scoring) — all CPU, no model.
 - The same canonical fixtures validate on both the TS (zod) and Python (Pydantic) sides.
-- An ephemeral A10 deploy serves `/v1/analyze`; `run_bench.py` produces a scorecard; the model decision is recorded in `SCORECARD.md`; the ephemeral app is destroyed.
-- No persistent Fly deploy, no session-host wiring, no `/v1/flow`, no OmniParser removal (those are Phases 3–4 and the optical-flow phase).
+- A deploy on the chosen substrate (amendment Task 12′) serves `/v1/analyze`; `run_bench.py` produces a scorecard; the model decision is recorded in `SCORECARD.md`.
+- No persistent deploy, no session-host wiring, no `/v1/flow`, no OmniParser removal (those are Phases 3–4 and the optical-flow phase).

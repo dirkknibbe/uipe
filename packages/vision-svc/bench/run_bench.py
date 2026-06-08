@@ -1,8 +1,9 @@
 """Unit-0-lite: POST each golden screenshot to a running /v1/analyze, score the
-result against the hand-labeled expectations, print a scorecard. Run against an
-ephemeral Fly A10 deploy (Task 12) — dogfoods the real contract + serve path.
+result against the hand-labeled expectations, print a scorecard. Run against the
+chosen GPU substrate (Modal / 3090) or a hosted VLM API — dogfoods the real
+contract + serve path. See docs substrate-pivot amendment, Task 12'.
 
-Usage: python bench/run_bench.py --base-url https://<app>.fly.dev
+Usage: python bench/run_bench.py --base-url <substrate-url-or-localhost>
 """
 import argparse
 import base64
