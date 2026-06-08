@@ -43,44 +43,9 @@ Each file has one responsibility: `schema.py` = wire DTOs; `mapping.py` = Qwen-t
 
 ## Task 1: ~~Fly A10 capacity/region gate~~ ⚠️ SUPERSEDED → Task 1′ (substrate bring-up)
 
-> **Fly is dead.** This task is replaced by **Task 1′** in the [substrate-pivot amendment](../specs/2026-06-08-phase2-substrate-pivot-amendment.md) §4 — substrate-agnostic bring-up (hosted API / Modal / 3090). The `fly auth`/`fly machine run`/`fly apps destroy` steps below no longer apply (Modal/hosted have no capacity gate). Original text kept as the decision trail.
-
-This is the spec's gating prerequisite. Not TDD — an ops check that must pass before sinking effort into the model code. Do this first; if it fails, stop and escalate.
-
-**Files:** none (records findings in the commit message / `packages/vision-svc/README.md` later).
-
-- [ ] **Step 1: Confirm Fly CLI auth**
-
-Run: `fly auth whoami`
-Expected: prints your Fly account email. If not, `fly auth login`.
-
-- [ ] **Step 2: List GPU sizes and regions**
-
-Run: `fly platform vm-sizes | grep -i a10` and `fly platform regions`
-Expected: an `a10` GPU size is listed. Note 1-2 regions you want (e.g. `ord`, `iad`).
-
-- [ ] **Step 3: Smoke-allocate a throwaway A10 machine**
-
-```bash
-fly apps create uipe-a10-capacity-check --machines
-fly machine run nvidia/cuda:12.4.1-runtime-ubuntu22.04 \
-  --app uipe-a10-capacity-check --vm-gpu-kind a10 --region ord \
-  --command "nvidia-smi" --rm
-```
-Expected: the machine boots and `nvidia-smi` prints an A10 GPU table. A capacity/region error here is the signal to escalate (try another region, or revisit the substrate assumption) **before** proceeding.
-
-- [ ] **Step 4: Tear down the check app**
-
-```bash
-fly apps destroy uipe-a10-capacity-check --yes
-```
-Expected: app destroyed. Record the working region for Task 12.
-
-- [ ] **Step 5: Commit a note** (no code yet — record the gate result)
-
-```bash
-git commit --allow-empty -m "chore(phase2): confirm Fly A10 capacity in <region>"
-```
+> **⚠️ SUPERSEDED — Fly is dead.** Replaced by **Task 1′** (substrate-agnostic bring-up: hosted API / Modal / 3090) in the [substrate-pivot amendment](../specs/2026-06-08-phase2-substrate-pivot-amendment.md) §4.
+>
+> The original Fly capacity-gate commands (`fly auth` / `fly platform` / `fly machine run` / `fly apps destroy`) were **excised here to avoid an agent running dead infra** from a retrieved chunk. They remain verbatim in git history at commit `2da9816` (PR #21) if needed for audit.
 
 ---
 
@@ -1035,12 +1000,12 @@ git commit -m "feat(vision-svc): Qwen2.5-VL analyzer (lazy GPU load, threaded in
 > [amendment](../specs/2026-06-08-phase2-substrate-pivot-amendment.md) §4 Task 9′.
 
 **Files:**
-- Create: `packages/vision-svc/Dockerfile`
-- Create: `packages/vision-svc/fly.toml`
+- Create: `packages/vision-svc/Dockerfile` (live — portable CUDA reference image)
+- ~~Create: `packages/vision-svc/fly.toml`~~ **dead** — per-substrate config (Modal ASGI / systemd / env-only) is in [amendment](../specs/2026-06-08-phase2-substrate-pivot-amendment.md) §4 Task 9′.
 
-> Validated by the ephemeral deploy in Task 12, not by a unit test. Verify the CUDA base tag and the Fly GPU stanza against current Fly docs at deploy time.
+> Validated by the deploy in Task 12′, not by a unit test. Verify the CUDA base tag against current docs at deploy time.
 
-- [ ] **Step 1: Write the Dockerfile**
+- [ ] **Step 1: Write the Dockerfile** (still live — runs on Modal/3090 unchanged)
 
 ```dockerfile
 FROM nvidia/cuda:12.4.1-cudnn-runtime-ubuntu22.04
@@ -1061,37 +1026,7 @@ EXPOSE 8000
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
 ```
 
-- [ ] **Step 2: Write the ephemeral `fly.toml`** (GPU, auto-stop, scale-to-zero)
-
-```toml
-app = "uipe-vision-svc-bench"
-primary_region = "ord"
-
-[build]
-  dockerfile = "Dockerfile"
-
-[http_service]
-  internal_port = 8000
-  auto_stop_machines = true
-  auto_start_machines = true
-  min_machines_running = 0
-
-[[vm]]
-  size = "a10"
-  memory = "16gb"
-```
-
-- [ ] **Step 3: Local Docker build sanity check** (no GPU needed to validate the build graph; skip the run)
-
-Run: `cd packages/vision-svc && docker build -t uipe-vision-svc:local . 2>&1 | tail -5` (optional — skip if Docker/disk is constrained on the Mac; the real build happens on Fly)
-Expected: build completes, or is deferred to the Fly build in Task 12.
-
-- [ ] **Step 4: Commit**
-
-```bash
-git add packages/vision-svc/Dockerfile packages/vision-svc/fly.toml
-git commit -m "feat(vision-svc): CUDA Dockerfile + ephemeral Fly A10 config"
-```
+> **⚠️ The original `fly.toml` (GPU/auto-stop/`size = "a10"`) + the Fly build/commit steps were excised here** (dead infra; would mislead a retrieved chunk). Verbatim in git history at commit `2da9816` (PR #21). The Dockerfile above stays; its substrate config is Task 9′.
 
 ---
 
@@ -1297,15 +1232,14 @@ Qwen2.5-VL analyze service for the personal GPU deploy (Phase 2).
 ## Local (CPU) tests
 `python -m pytest`  — contract/schema/mapping/handler/scoring. No GPU, no model.
 
-## ~~Ephemeral A10 benchmark~~ Benchmark (Unit-0-lite) — ⚠️ substrate AMENDED
-> Fly steps below are dead. The benchmark itself is substrate-agnostic — `run_bench.py`
-> takes `--base-url`, so point it at a Modal URL, the hosted-API service, or `localhost`.
-> Bring-up + teardown per substrate: [amendment](../specs/2026-06-08-phase2-substrate-pivot-amendment.md) §4 (Modal/hosted scale to zero — no `fly apps destroy`).
-1. ~~`fly deploy --config fly.toml`~~ Bring up the chosen substrate (Task 1′).
+## Benchmark (Unit-0-lite) — substrate-agnostic
+> Run against whichever substrate is chosen (amendment §3): a Modal URL, the hosted-API
+> service, or `localhost`. `run_bench.py` takes `--base-url`, so nothing here is substrate-specific.
+1. Bring up the chosen substrate (amendment Task 1′).
 2. `python bench/run_bench.py --base-url <substrate-url-or-localhost>`
    (first calls return status=warming while the model loads; the runner retries).
 3. Read the scorecard; PASS = mean interactable recall >= 0.80 and p95 latency <= 8000ms.
-4. ~~`fly apps destroy …`~~ Teardown is substrate-specific (scale-to-zero = nothing to do).
+4. Teardown is substrate-specific (Modal/hosted scale to zero — nothing to do; a 3090 just idles).
 
 If Qwen FAILS the bar, add InternVL2.5 / Florence-2 (swap VISION_MODEL_ID), re-run,
 pick the best — or ship vision-degraded (structural-only) per the spec escape hatch.
@@ -1327,57 +1261,9 @@ git commit -m "feat(vision-svc): golden set + run_bench.py eval runner + runbook
 
 ## Task 12: ~~Ephemeral [Fly] deploy~~ → bench → golden eval → (teardown) — ⚠️ SUPERSEDED → Task 12′
 
-> **Fly is dead.** Replaced by **Task 12′** in the [amendment](../specs/2026-06-08-phase2-substrate-pivot-amendment.md) §4 — same shape (deploy → bench → score → record) on the chosen substrate, minus Fly spin-up/`fly apps destroy` (scale-to-zero). Blocked on the §3 substrate decision + the golden set TODO. Original Fly steps kept as the decision trail.
-
-Not TDD — the real-GPU validation. This is where Qwen is confirmed (or challenged) on actual screenshots.
-
-**Files:** updates `packages/vision-svc/bench/SCORECARD.md` with the recorded result.
-
-- [ ] **Step 1: Deploy to the ephemeral A10**
-
-```bash
-cd packages/vision-svc
-fly launch --no-deploy --copy-config --name uipe-vision-svc-bench   # if app not yet created
-fly deploy --config fly.toml
-```
-Expected: image builds, an A10 machine boots, `fly status` shows it running. Model load happens on first request (warming).
-
-- [ ] **Step 2: Health check**
-
-Run: `curl https://uipe-vision-svc-bench.fly.dev/v1/health`
-Expected: `{"ready": false, ...}` initially, then `{"ready": true, ...}` after the model finishes loading (~30–60s).
-
-- [ ] **Step 3: Run the benchmark**
-
-Run: `python bench/run_bench.py --base-url https://uipe-vision-svc-bench.fly.dev`
-Expected: a scorecard table + `RESULT: PASS` or `FAIL`.
-
-- [ ] **Step 4: Record the decision**
-
-Write `bench/SCORECARD.md` with the date, model_id, the table, mean recall, p95 latency, and the decision (Qwen confirmed / challenger needed / vision-degraded). This is the Unit-0-lite output the spec calls for.
-
-- [ ] **Step 5: If FAIL — challenge** (only if needed)
-
-```bash
-fly secrets set VISION_MODEL_ID=OpenGVLab/InternVL2_5-8B --app uipe-vision-svc-bench
-fly deploy --config fly.toml
-python bench/run_bench.py --base-url https://uipe-vision-svc-bench.fly.dev
-```
-Repeat with Florence-2 if needed; pick the best, or invoke the vision-degraded escape hatch and document it. Update `SCORECARD.md`.
-
-- [ ] **Step 6: Tear down (stop billing)**
-
-```bash
-fly apps destroy uipe-vision-svc-bench --yes
-```
-Expected: app destroyed.
-
-- [ ] **Step 7: Commit the scorecard**
-
-```bash
-git add packages/vision-svc/bench/SCORECARD.md
-git commit -m "docs(vision-svc): Unit-0-lite scorecard + model decision"
-```
+> **⚠️ SUPERSEDED — Fly is dead.** Replaced by **Task 12′** in the [substrate-pivot amendment](../specs/2026-06-08-phase2-substrate-pivot-amendment.md) §4 — same shape (deploy → bench → score → record `bench/SCORECARD.md`) on the chosen substrate, minus Fly spin-up/`fly apps destroy` (scale-to-zero). Blocked on the §3 substrate decision + the golden-set TODO.
+>
+> The original Fly deploy/health/challenge/teardown commands (`fly launch` / `fly deploy` / `fly secrets set` / `fly apps destroy`) were **excised here to avoid an agent running dead infra** from a retrieved chunk. They remain verbatim in git history at commit `2da9816` (PR #21) for audit. The model-decision logic (Qwen confirmed / challenger / vision-degraded) is unchanged and lives in Task 12′.
 
 ---
 
