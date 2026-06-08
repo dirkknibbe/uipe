@@ -1,8 +1,15 @@
 # Phase 2 — `vision-svc` (Qwen analyze track)
 
 **Date:** 2026-06-07
-**Status:** Design — approved in brainstorm, pending implementation plan
+**Status:** Design — CPU slice implemented (PR #22/#23). **⚠️ Substrate AMENDED 2026-06-08.**
 **Parent spec:** [`2026-05-31-personal-gpu-deploy-design.md`](2026-05-31-personal-gpu-deploy-design.md) — this is the detailed design for that spec's **Phase 2**. It inherits all locked program decisions (Fly.io, Qwen2.5-VL-7B, two-tier vision, A10, on-demand GPU, bearer auth, SSRF defense) and does **not** re-litigate them.
+
+> **⚠️ SUPERSEDED (substrate only) — see [`2026-06-08-phase2-substrate-pivot-amendment.md`](2026-06-08-phase2-substrate-pivot-amendment.md).**
+> Fly killed its GPUs (deprecated, gone after 2026-07-31). **Fly is dead as a substrate.**
+> Everywhere this doc says "Fly", "A10", "ephemeral deploy", "approval/capacity gate", the
+> amendment overrides it (substrate is now PENDING: hosted API / Modal / used-3090 rig).
+> The contract, status/reason enum, classification ladder, fixtures, and `mapping.py` are
+> **unchanged** — the pivot is substrate-only.
 
 ## Overview
 
@@ -30,7 +37,7 @@ This phase delivers a validated, contract-tested vision service in isolation. It
 
 | # | Decision | Rationale |
 |---|---|---|
-| P2-1 | **GPU substrate = ephemeral Fly A10** (spin up → bench/eval → tear down) | Same substrate as the eventual production target; knocks out the Fly A10 availability prereq now. |
+| P2-1 | ~~**GPU substrate = ephemeral Fly A10**~~ **⚠️ SUPERSEDED** → substrate PENDING (hosted API / Modal / 3090); see [amendment](2026-06-08-phase2-substrate-pivot-amendment.md) §3–4 | Fly deprecated GPUs. The backend is now a config flag (`VISION_BACKEND`) across 3 pluggable analyzers, so the substrate is no longer load-bearing on the contract. |
 | P2-2 | **VLM analyze track only**; optical-flow CUDA-EP port → its own phase | One model type at a time; cleanest vertical slice; least GPU cost per iteration. |
 | P2-3 | **Qwen-first benchmark**; challenge with InternVL2.5/Florence-2 only if Qwen misses the bar | Qwen is the inherited default; least GPU cost; vision-degraded escape hatch covers total failure. |
 | P2-4 | **Detection-shaped `/v1/analyze` response** (`elements[]` + status); `VisualUnderstanding` deferred to Phase 3 | Smallest stable surface; additive-safe per the contract rule; golden eval scores element labels. |
@@ -63,7 +70,7 @@ packages/contracts/             # EXTENDED
 
 `sidecar/omniparser/` is **untouched** in Phase 2 (it is removed in Phase 3 when the pipeline stops consuming it). `vision-svc` is new and parallel.
 
-**Toolchain note:** `vision-svc` runs on Fly's Linux + CUDA A10, so it is **free of the torch 2.2.2 x86-macOS pin** that constrains the OmniParser sidecar (that pin is a Mac-hardware limit, not a code limit). It uses a current torch on a CUDA base image. `torch.load(weights_only=True)` is still enforced everywhere (carries forward the accepted-risk mitigation). A10's 24 GB VRAM fits a 7B VLM in fp16 (~16 GB) with headroom.
+**Toolchain note:** `vision-svc` runs on the chosen CUDA substrate (Modal or a local 3090) ~~Fly's Linux + CUDA A10~~ — Linux + CUDA either way — so it is **free of the torch 2.2.2 x86-macOS pin** that constrains the OmniParser sidecar (that pin is a Mac-hardware limit, not a code limit). It uses a current torch on a CUDA base image. `torch.load(weights_only=True)` is still enforced everywhere (carries forward the accepted-risk mitigation). A 24 GB card (A10/L4/3090) fits a 7B VLM in fp16 (~16 GB) with headroom — bench VRAM for KV/high-res before locking (see [amendment](2026-06-08-phase2-substrate-pivot-amendment.md) §3 caveats). The hosted-API backend needs no GPU at all.
 
 ## The `/v1/analyze` contract
 

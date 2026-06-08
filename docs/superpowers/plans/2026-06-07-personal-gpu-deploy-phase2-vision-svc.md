@@ -1,5 +1,12 @@
 # Phase 2 — vision-svc (Qwen analyze track) Implementation Plan
 
+> **⚠️ STATUS 2026-06-08: Tasks 2–10 SHIPPED (PR #22/#23). Tasks 1 / 9 / 12 SUPERSEDED — Fly is dead.**
+> See [`../specs/2026-06-08-phase2-substrate-pivot-amendment.md`](../specs/2026-06-08-phase2-substrate-pivot-amendment.md).
+> The contract/CPU work (Tasks 2–10) is merged and unaffected. The three **ops** tasks
+> were Fly-specific and are replaced by the amendment's substrate-agnostic **Task 1′ / 9′ /
+> 12′** (substrate PENDING: hosted API / Modal / used-3090 rig). Ignore "Fly", "A10",
+> "ephemeral deploy", and "`fly apps destroy`" below — read those tasks via the amendment.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Build and validate the Qwen2.5-VL "analyze" vertical slice — a Python `vision-svc` serving `/v1/analyze`, the pinned `@uipe/contracts` `/v1` schema it speaks, and a real-GPU benchmark/eval on an ephemeral Fly A10 that confirms Qwen on real UIPE screenshots.
@@ -34,7 +41,9 @@ Each file has one responsibility: `schema.py` = wire DTOs; `mapping.py` = Qwen-t
 
 ---
 
-## Task 1: Fly A10 capacity/region gate (ops — verify early)
+## Task 1: ~~Fly A10 capacity/region gate~~ ⚠️ SUPERSEDED → Task 1′ (substrate bring-up)
+
+> **Fly is dead.** This task is replaced by **Task 1′** in the [substrate-pivot amendment](../specs/2026-06-08-phase2-substrate-pivot-amendment.md) §4 — substrate-agnostic bring-up (hosted API / Modal / 3090). The `fly auth`/`fly machine run`/`fly apps destroy` steps below no longer apply (Modal/hosted have no capacity gate). Original text kept as the decision trail.
 
 This is the spec's gating prerequisite. Not TDD — an ops check that must pass before sinking effort into the model code. Do this first; if it fails, stop and escalate.
 
@@ -1018,7 +1027,12 @@ git commit -m "feat(vision-svc): Qwen2.5-VL analyzer (lazy GPU load, threaded in
 
 ---
 
-## Task 9: Dockerfile (CUDA) + Fly config
+## Task 9: Dockerfile (CUDA) ~~+ Fly config~~ ⚠️ AMENDED → Task 9′
+
+> **Dockerfile STAYS** as the portable CUDA reference image (runs on Modal/3090 unchanged).
+> **`fly.toml` is DEAD** — leave as a historical artifact or delete (254 B). Per-substrate
+> config (Modal ASGI wrapper / systemd unit / env-only for hosted) is in the
+> [amendment](../specs/2026-06-08-phase2-substrate-pivot-amendment.md) §4 Task 9′.
 
 **Files:**
 - Create: `packages/vision-svc/Dockerfile`
@@ -1283,12 +1297,15 @@ Qwen2.5-VL analyze service for the personal GPU deploy (Phase 2).
 ## Local (CPU) tests
 `python -m pytest`  — contract/schema/mapping/handler/scoring. No GPU, no model.
 
-## Ephemeral A10 benchmark (Unit-0-lite)
-1. `fly deploy --config fly.toml` (builds the CUDA image, boots an A10).
-2. `python bench/run_bench.py --base-url https://uipe-vision-svc-bench.fly.dev`
+## ~~Ephemeral A10 benchmark~~ Benchmark (Unit-0-lite) — ⚠️ substrate AMENDED
+> Fly steps below are dead. The benchmark itself is substrate-agnostic — `run_bench.py`
+> takes `--base-url`, so point it at a Modal URL, the hosted-API service, or `localhost`.
+> Bring-up + teardown per substrate: [amendment](../specs/2026-06-08-phase2-substrate-pivot-amendment.md) §4 (Modal/hosted scale to zero — no `fly apps destroy`).
+1. ~~`fly deploy --config fly.toml`~~ Bring up the chosen substrate (Task 1′).
+2. `python bench/run_bench.py --base-url <substrate-url-or-localhost>`
    (first calls return status=warming while the model loads; the runner retries).
 3. Read the scorecard; PASS = mean interactable recall >= 0.80 and p95 latency <= 8000ms.
-4. `fly apps destroy uipe-vision-svc-bench --yes` to stop billing.
+4. ~~`fly apps destroy …`~~ Teardown is substrate-specific (scale-to-zero = nothing to do).
 
 If Qwen FAILS the bar, add InternVL2.5 / Florence-2 (swap VISION_MODEL_ID), re-run,
 pick the best — or ship vision-degraded (structural-only) per the spec escape hatch.
@@ -1308,7 +1325,9 @@ git commit -m "feat(vision-svc): golden set + run_bench.py eval runner + runbook
 
 ---
 
-## Task 12: Ephemeral deploy → Unit-0-lite bench → golden eval → teardown (ops)
+## Task 12: ~~Ephemeral [Fly] deploy~~ → bench → golden eval → (teardown) — ⚠️ SUPERSEDED → Task 12′
+
+> **Fly is dead.** Replaced by **Task 12′** in the [amendment](../specs/2026-06-08-phase2-substrate-pivot-amendment.md) §4 — same shape (deploy → bench → score → record) on the chosen substrate, minus Fly spin-up/`fly apps destroy` (scale-to-zero). Blocked on the §3 substrate decision + the golden set TODO. Original Fly steps kept as the decision trail.
 
 Not TDD — the real-GPU validation. This is where Qwen is confirmed (or challenged) on actual screenshots.
 

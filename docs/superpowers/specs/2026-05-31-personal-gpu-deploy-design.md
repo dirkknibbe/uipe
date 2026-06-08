@@ -1,8 +1,17 @@
-# Personal GPU Deploy — UIPE on Fly (scoped sibling of MCPaaSTA)
+# Personal GPU Deploy — ~~UIPE on Fly~~ (scoped sibling of MCPaaSTA)
 
 **Date:** 2026-05-31
-**Status:** Design — approved in brainstorm, pending implementation plan
+**Status:** Design — Phase 1 (monorepo) + Phase 2 (vision-svc CPU slice) shipped. **⚠️ Substrate AMENDED 2026-06-08 — Fly is dead.**
 **Parent spec:** [`2026-04-14-mcpaasta-design.md`](2026-04-14-mcpaasta-design.md) — this design **inherits** the parent's infrastructure decisions and **defers** its product layer.
+
+> **⚠️ "UIPE on Fly" is SUPERSEDED — see [`2026-06-08-phase2-substrate-pivot-amendment.md`](2026-06-08-phase2-substrate-pivot-amendment.md).**
+> Fly deprecated its GPUs (gone after 2026-07-31), so **Fly is abandoned for all phases.**
+> Decision **D2 ("Hosting platform = Fly.io") is dead**; the substrate is now PENDING
+> (hosted API / Modal / used-3090 rig). The whole `infra/fly/` layer, the Fly egress-CIDR
+> firewall, private-net routing, and Fly-secret bearer auth are **deferred to a Phase 4
+> re-spec** against the chosen substrate. The architecture (session-host + vision-svc
+> boundary, the `/v1` contract, two-tier vision, SSRF app-layer defense) is substrate-
+> independent and stands.
 
 ## Overview
 
