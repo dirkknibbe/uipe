@@ -404,6 +404,11 @@ Run: `pnpm -F @uipe/core exec vitest run --reporter=verbose`
 
 ### Task 2.2: Untrusted-content envelope on perception output (`inj-1`, `web-2`, `inj-3`, `inj-4`)
 
+> **Implemented 2026-06-09** on `security/track2-untrusted-boundary`. Deviations from the sample below, by design:
+> - **Defang via HTML-entity encoding** (`&lt;/untrusted_page_content&gt;`), not the zero-width-space sample — visible in source (no invisible chars) and reads as inert text to the consuming agent, which is stronger against LLM injection. Same `wrapUntrusted` contract; 5 tests in `tests/unit/untrusted-envelope.test.ts`.
+> - **`get_scene` wraps BOTH `toCompact` and `toJSON`** paths — same page-derived scene data; wrapping only the compact path would leave a trivial `format="json"` bypass.
+> - **Deferred (follow-up, Task 2.5 candidate):** `detect_elements` (vision-derived labels JSON) and the JSON state tools `get_timeline` / `get_component_index` / `compare_states` also surface page-derived substrings but are NOT yet enveloped. This task scoped exactly the 6 tools in the "Modify" line below; the deferral is intentional, not an oversight.
+
 **Files:**
 - Modify: `packages/core/src/mcp/server.ts` — the text returned by `navigate`/`get_scene`/`act`/`get_console_logs`/`get_network_errors`/`analyze_visual`.
 - Modify each tool `description` to state the boundary.
