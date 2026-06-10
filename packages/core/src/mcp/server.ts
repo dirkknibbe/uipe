@@ -14,6 +14,7 @@ import { FrameCapture } from '../pipelines/visual/frame-capture.js';
 import { toJSON, toCompact } from '../pipelines/fusion/serializer.js';
 import { compileExcludePattern } from '../utils/safe-regex.js';
 import { actInputSchema } from './act-schema.js';
+import { sanitizeToolError } from '../utils/sanitize-error.js';
 import { affordanceToText, formatVisualAnalysis } from './serializer.js';
 import { Config } from '../config.js';
 import type { AnalysisDepth } from '../types/index.js';
@@ -261,16 +262,22 @@ export function createServer(config: ServerConfig = {}): McpServer {
       inputSchema: actInputSchema, // bounded numeric args, extracted to act-schema.ts (mcp-3)
     },
     async (input) => {
-      await ensureLaunched();
-      await runtime.executeAction(input as import('../types/browser-actions.js').BrowserAction);
-      const graph = await captureGraph();
-      const transition = tracker.observe(graph);
-      let text = `Action executed: ${input.type}\n\n` + toCompact(graph);
-      if (transition) {
-        text += `\n\n[Transition: ${transition.type}]`;
+      try {
+        await ensureLaunched();
+        await runtime.executeAction(input as import('../types/browser-actions.js').BrowserAction);
+        const graph = await captureGraph();
+        const transition = tracker.observe(graph);
+        let text = `Action executed: ${input.type}\n\n` + toCompact(graph);
+        if (transition) {
+          text += `\n\n[Transition: ${transition.type}]`;
+        }
+        scheduleIdleDrain();
+        return { content: [{ type: 'text' as const, text }] };
+      } catch (e) {
+        // mcp-4: log full error internally, return a host-path-free message to the client
+        log.error('act handler failed', { action: input.type, err: e });
+        return { content: [{ type: 'text' as const, text: `Action failed: ${sanitizeToolError(e)}` }], isError: true };
       }
-      scheduleIdleDrain();
-      return { content: [{ type: 'text' as const, text }] };
     },
   );
 
