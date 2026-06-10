@@ -55,8 +55,9 @@ describe('TemporalTracker integration', () => {
 
   it('navigation to different URL → navigation transition', async () => {
     expect(tracker.getLatest()).not.toBeNull();
-    // Use a data URI to avoid network dependency
-    await runtime.navigate('data:text/html,<html><body><h1>Page 2</h1></body></html>');
+    // Distinct real URL (url-guard blocks data: URLs now, mcp-1/web-1); example.org
+    // is a reserved test domain, so this stays a real navigation transition.
+    await runtime.navigate('https://example.org');
     const nodes = await structural.extractStructure(runtime.getPage());
     const graph = engine.fuse([], nodes, {
       url: runtime.currentUrl(),

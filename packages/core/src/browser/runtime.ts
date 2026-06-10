@@ -2,6 +2,7 @@ import { chromium, type Browser, type BrowserContext, type Page } from 'playwrig
 import type { BoundingBox, Viewport, BrowserAction, ConsoleMessage, NetworkError } from '../types/index.js';
 import { executeAction as dispatchAction } from './actions.js';
 import { createLogger } from '../utils/logger.js';
+import { assertNavigableUrl } from '../utils/url-guard.js';
 
 export type { ConsoleMessage, NetworkError };
 
@@ -83,6 +84,7 @@ export class BrowserRuntime {
   }
 
   async navigate(url: string): Promise<void> {
+    assertNavigableUrl(url); // reject file:/data:/javascript:/etc. before goto (mcp-1, web-1)
     logger.info('Navigating', { url });
     await this.activePage.goto(url, { waitUntil: 'domcontentloaded' });
   }
