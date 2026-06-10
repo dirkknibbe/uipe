@@ -12,6 +12,7 @@ import { AffordanceEngine } from '../pipelines/affordance/index.js';
 import { VisualPipeline, type VisualPipelineConfig } from '../pipelines/visual/index.js';
 import { FrameCapture } from '../pipelines/visual/frame-capture.js';
 import { toJSON, toCompact } from '../pipelines/fusion/serializer.js';
+import { compileExcludePattern } from '../utils/safe-regex.js';
 import { affordanceToText, formatVisualAnalysis } from './serializer.js';
 import { Config } from '../config.js';
 import type { AnalysisDepth } from '../types/index.js';
@@ -305,8 +306,9 @@ export function createServer(config: ServerConfig = {}): McpServer {
       const logs = runtime.getConsoleLogs();
       let filtered = type === 'all' ? logs : logs.filter(l => l.type === type);
       if (excludePattern) {
-        const re = new RegExp(excludePattern);
-        filtered = filtered.filter(l => !re.test(l.text));
+        const re = compileExcludePattern(excludePattern);
+        // over-long/invalid pattern -> no exclusion applied (bounded, no throw/ReDoS)
+        if (re) filtered = filtered.filter(l => !re.test(l.text));
       }
       if (filtered.length === 0) {
         return { content: [{ type: 'text' as const, text: `No ${type === 'all' ? '' : type + ' '}console messages captured.` }] };
