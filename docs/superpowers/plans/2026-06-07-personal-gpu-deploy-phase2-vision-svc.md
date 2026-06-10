@@ -1,12 +1,19 @@
 # Phase 2 — vision-svc (Qwen analyze track) Implementation Plan
 
+> **⚠️ STATUS 2026-06-08: Tasks 2–10 SHIPPED (PR #22/#23). Tasks 1 / 9 / 12 SUPERSEDED — Fly is dead.**
+> See [`../specs/2026-06-08-phase2-substrate-pivot-amendment.md`](../specs/2026-06-08-phase2-substrate-pivot-amendment.md).
+> The contract/CPU work (Tasks 2–10) is merged and unaffected. The three **ops** tasks
+> were Fly-specific and are replaced by the amendment's substrate-agnostic **Task 1′ / 9′ /
+> 12′** (substrate PENDING: hosted API / Modal / used-3090 rig). Ignore "Fly", "A10",
+> "ephemeral deploy", and "`fly apps destroy`" below — read those tasks via the amendment.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Build and validate the Qwen2.5-VL "analyze" vertical slice — a Python `vision-svc` serving `/v1/analyze`, the pinned `@uipe/contracts` `/v1` schema it speaks, and a real-GPU benchmark/eval on an ephemeral Fly A10 that confirms Qwen on real UIPE screenshots.
+**Goal:** Build and validate the Qwen2.5-VL "analyze" vertical slice — a Python `vision-svc` serving `/v1/analyze`, the pinned `@uipe/contracts` `/v1` schema it speaks, and a real-GPU benchmark/eval on the chosen substrate (see the [substrate-pivot amendment](../specs/2026-06-08-phase2-substrate-pivot-amendment.md)) that confirms Qwen on real UIPE screenshots.
 
-**Architecture:** A new Python FastAPI service (`packages/vision-svc/`) loads Qwen2.5-VL-7B and exposes `POST /v1/analyze` + `GET /v1/health`. The wire contract lives in `@uipe/contracts` and is enforced cross-language by shared JSON fixtures (TS+zod consumer side, Pydantic producer side). Failures are classified by control-flow position and exception type into a small `status`/`reason` enum — never by parsing error strings. The model runs only on an ephemeral A10 spun up for the bench/eval and torn down after.
+**Architecture:** A new Python FastAPI service (`packages/vision-svc/`) loads Qwen2.5-VL-7B and exposes `POST /v1/analyze` + `GET /v1/health`. The wire contract lives in `@uipe/contracts` and is enforced cross-language by shared JSON fixtures (TS+zod consumer side, Pydantic producer side). Failures are classified by control-flow position and exception type into a small `status`/`reason` enum — never by parsing error strings. The model runs on the chosen GPU substrate (hosted API / Modal / 3090 — see the [substrate-pivot amendment](../specs/2026-06-08-phase2-substrate-pivot-amendment.md)); the contract + mapping tests need no GPU.
 
-**Tech Stack:** TypeScript + zod + vitest (contracts); Python 3.11 + FastAPI + Pydantic v2 + pytest (vision-svc); transformers + torch (CUDA) for Qwen2.5-VL; Fly.io A10 GPU; Docker (CUDA base).
+**Tech Stack:** TypeScript + zod + vitest (contracts); Python 3.11 + FastAPI + Pydantic v2 + pytest (vision-svc); transformers + torch (CUDA) for Qwen2.5-VL; a 24 GB CUDA GPU substrate (Modal / used 3090) or a hosted VLM API — see the amendment; Docker (CUDA base).
 
 **Spec:** [`docs/superpowers/specs/2026-06-07-personal-gpu-deploy-phase2-vision-svc-design.md`](../specs/2026-06-07-personal-gpu-deploy-phase2-vision-svc-design.md)
 
@@ -28,50 +35,17 @@
 - `app/__init__.py`, `app/config.py`, `app/schema.py`, `app/mapping.py`, `app/qwen.py`, `app/main.py`
 - `bench/scoring.py`, `bench/run_bench.py`, `bench/golden/` (screenshots + `expected/*.json`)
 - `tests/test_schema_fixtures.py`, `tests/test_mapping.py`, `tests/test_analyze_handler.py`, `tests/test_scoring.py`, `tests/fixtures/qwen_raw/*.txt`
-- `Dockerfile`, `fly.toml`
+- `Dockerfile` (portable CUDA reference image; per-substrate config lives in the [amendment](../specs/2026-06-08-phase2-substrate-pivot-amendment.md) §4, not `fly.toml`)
 
 Each file has one responsibility: `schema.py` = wire DTOs; `mapping.py` = Qwen-text → DTO (the only model-format-aware code); `qwen.py` = model load+infer; `main.py` = transport + the classification ladder; `bench/scoring.py` = pure metrics; `bench/run_bench.py` = the eval runner.
 
 ---
 
-## Task 1: Fly A10 capacity/region gate (ops — verify early)
+## Task 1: ~~Fly A10 capacity/region gate~~ ⚠️ SUPERSEDED → Task 1′ (substrate bring-up)
 
-This is the spec's gating prerequisite. Not TDD — an ops check that must pass before sinking effort into the model code. Do this first; if it fails, stop and escalate.
-
-**Files:** none (records findings in the commit message / `packages/vision-svc/README.md` later).
-
-- [ ] **Step 1: Confirm Fly CLI auth**
-
-Run: `fly auth whoami`
-Expected: prints your Fly account email. If not, `fly auth login`.
-
-- [ ] **Step 2: List GPU sizes and regions**
-
-Run: `fly platform vm-sizes | grep -i a10` and `fly platform regions`
-Expected: an `a10` GPU size is listed. Note 1-2 regions you want (e.g. `ord`, `iad`).
-
-- [ ] **Step 3: Smoke-allocate a throwaway A10 machine**
-
-```bash
-fly apps create uipe-a10-capacity-check --machines
-fly machine run nvidia/cuda:12.4.1-runtime-ubuntu22.04 \
-  --app uipe-a10-capacity-check --vm-gpu-kind a10 --region ord \
-  --command "nvidia-smi" --rm
-```
-Expected: the machine boots and `nvidia-smi` prints an A10 GPU table. A capacity/region error here is the signal to escalate (try another region, or revisit the substrate assumption) **before** proceeding.
-
-- [ ] **Step 4: Tear down the check app**
-
-```bash
-fly apps destroy uipe-a10-capacity-check --yes
-```
-Expected: app destroyed. Record the working region for Task 12.
-
-- [ ] **Step 5: Commit a note** (no code yet — record the gate result)
-
-```bash
-git commit --allow-empty -m "chore(phase2): confirm Fly A10 capacity in <region>"
-```
+> **⚠️ SUPERSEDED — Fly is dead.** Replaced by **Task 1′** (substrate-agnostic bring-up: hosted API / Modal / 3090) in the [substrate-pivot amendment](../specs/2026-06-08-phase2-substrate-pivot-amendment.md) §4.
+>
+> The original Fly capacity-gate commands (`fly auth` / `fly platform` / `fly machine run` / `fly apps destroy`) were **excised here to avoid an agent running dead infra** from a retrieved chunk. They remain verbatim in git history at commit `2da9816` (PR #21) if needed for audit.
 
 ---
 
@@ -915,7 +889,7 @@ git commit -m "feat(vision-svc): /v1/analyze handler with status/reason classifi
 **Files:**
 - Create: `packages/vision-svc/app/qwen.py`
 
-> This code runs ONLY on the A10 — it cannot be unit-tested on the Mac. It is validated by the golden eval (Task 12). Before relying on the exact transformers API below, verify it against the current Qwen2.5-VL model card (transformers ≥4.49 introduced `Qwen2_5_VLForConditionalGeneration`); the processor/`generate` surface shifts between releases. (Offer: a context7 lookup of "Qwen2.5-VL transformers usage" at implementation time.)
+> This code runs ONLY on a CUDA GPU substrate (Modal / 3090) — it cannot be unit-tested on the Mac. It is validated by the golden eval (Task 12′). Before relying on the exact transformers API below, verify it against the current Qwen2.5-VL model card (transformers ≥4.49 introduced `Qwen2_5_VLForConditionalGeneration`); the processor/`generate` surface shifts between releases. (Offer: a context7 lookup of "Qwen2.5-VL transformers usage" at implementation time.)
 
 - [ ] **Step 1: Write `app/qwen.py`**
 
@@ -1018,15 +992,20 @@ git commit -m "feat(vision-svc): Qwen2.5-VL analyzer (lazy GPU load, threaded in
 
 ---
 
-## Task 9: Dockerfile (CUDA) + Fly config
+## Task 9: Dockerfile (CUDA) ~~+ Fly config~~ ⚠️ AMENDED → Task 9′
+
+> **Dockerfile STAYS** as the portable CUDA reference image (runs on Modal/3090 unchanged).
+> **`fly.toml` is DEAD** — leave as a historical artifact or delete (254 B). Per-substrate
+> config (Modal ASGI wrapper / systemd unit / env-only for hosted) is in the
+> [amendment](../specs/2026-06-08-phase2-substrate-pivot-amendment.md) §4 Task 9′.
 
 **Files:**
-- Create: `packages/vision-svc/Dockerfile`
-- Create: `packages/vision-svc/fly.toml`
+- Create: `packages/vision-svc/Dockerfile` (live — portable CUDA reference image)
+- ~~Create: `packages/vision-svc/fly.toml`~~ **dead** — per-substrate config (Modal ASGI / systemd / env-only) is in [amendment](../specs/2026-06-08-phase2-substrate-pivot-amendment.md) §4 Task 9′.
 
-> Validated by the ephemeral deploy in Task 12, not by a unit test. Verify the CUDA base tag and the Fly GPU stanza against current Fly docs at deploy time.
+> Validated by the deploy in Task 12′, not by a unit test. Verify the CUDA base tag against current docs at deploy time.
 
-- [ ] **Step 1: Write the Dockerfile**
+- [ ] **Step 1: Write the Dockerfile** (still live — runs on Modal/3090 unchanged)
 
 ```dockerfile
 FROM nvidia/cuda:12.4.1-cudnn-runtime-ubuntu22.04
@@ -1047,37 +1026,7 @@ EXPOSE 8000
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
 ```
 
-- [ ] **Step 2: Write the ephemeral `fly.toml`** (GPU, auto-stop, scale-to-zero)
-
-```toml
-app = "uipe-vision-svc-bench"
-primary_region = "ord"
-
-[build]
-  dockerfile = "Dockerfile"
-
-[http_service]
-  internal_port = 8000
-  auto_stop_machines = true
-  auto_start_machines = true
-  min_machines_running = 0
-
-[[vm]]
-  size = "a10"
-  memory = "16gb"
-```
-
-- [ ] **Step 3: Local Docker build sanity check** (no GPU needed to validate the build graph; skip the run)
-
-Run: `cd packages/vision-svc && docker build -t uipe-vision-svc:local . 2>&1 | tail -5` (optional — skip if Docker/disk is constrained on the Mac; the real build happens on Fly)
-Expected: build completes, or is deferred to the Fly build in Task 12.
-
-- [ ] **Step 4: Commit**
-
-```bash
-git add packages/vision-svc/Dockerfile packages/vision-svc/fly.toml
-git commit -m "feat(vision-svc): CUDA Dockerfile + ephemeral Fly A10 config"
-```
+> **⚠️ The original `fly.toml` (GPU/auto-stop/`size = "a10"`) + the Fly build/commit steps were excised here** (dead infra; would mislead a retrieved chunk). Verbatim in git history at commit `2da9816` (PR #21). The Dockerfile above stays; its substrate config is Task 9′.
 
 ---
 
@@ -1205,10 +1154,11 @@ For each screenshot, hand-write `expected/<name>.json` — the elements you'd ex
 
 ```python
 """Unit-0-lite: POST each golden screenshot to a running /v1/analyze, score the
-result against the hand-labeled expectations, print a scorecard. Run against an
-ephemeral Fly A10 deploy (Task 12) — dogfoods the real contract + serve path.
+result against the hand-labeled expectations, print a scorecard. Run against the
+chosen GPU substrate (Modal / 3090) or a hosted VLM API — dogfoods the real
+contract + serve path. See docs substrate-pivot amendment, Task 12'.
 
-Usage: python bench/run_bench.py --base-url https://<app>.fly.dev
+Usage: python bench/run_bench.py --base-url <substrate-url-or-localhost>
 """
 import argparse
 import base64
@@ -1283,12 +1233,14 @@ Qwen2.5-VL analyze service for the personal GPU deploy (Phase 2).
 ## Local (CPU) tests
 `python -m pytest`  — contract/schema/mapping/handler/scoring. No GPU, no model.
 
-## Ephemeral A10 benchmark (Unit-0-lite)
-1. `fly deploy --config fly.toml` (builds the CUDA image, boots an A10).
-2. `python bench/run_bench.py --base-url https://uipe-vision-svc-bench.fly.dev`
+## Benchmark (Unit-0-lite) — substrate-agnostic
+> Run against whichever substrate is chosen (amendment §3): a Modal URL, the hosted-API
+> service, or `localhost`. `run_bench.py` takes `--base-url`, so nothing here is substrate-specific.
+1. Bring up the chosen substrate (amendment Task 1′).
+2. `python bench/run_bench.py --base-url <substrate-url-or-localhost>`
    (first calls return status=warming while the model loads; the runner retries).
 3. Read the scorecard; PASS = mean interactable recall >= 0.80 and p95 latency <= 8000ms.
-4. `fly apps destroy uipe-vision-svc-bench --yes` to stop billing.
+4. Teardown is substrate-specific (Modal/hosted scale to zero — nothing to do; a 3090 just idles).
 
 If Qwen FAILS the bar, add InternVL2.5 / Florence-2 (swap VISION_MODEL_ID), re-run,
 pick the best — or ship vision-degraded (structural-only) per the spec escape hatch.
@@ -1308,57 +1260,11 @@ git commit -m "feat(vision-svc): golden set + run_bench.py eval runner + runbook
 
 ---
 
-## Task 12: Ephemeral deploy → Unit-0-lite bench → golden eval → teardown (ops)
+## Task 12: ~~Ephemeral [Fly] deploy~~ → bench → golden eval → (teardown) — ⚠️ SUPERSEDED → Task 12′
 
-Not TDD — the real-GPU validation. This is where Qwen is confirmed (or challenged) on actual screenshots.
-
-**Files:** updates `packages/vision-svc/bench/SCORECARD.md` with the recorded result.
-
-- [ ] **Step 1: Deploy to the ephemeral A10**
-
-```bash
-cd packages/vision-svc
-fly launch --no-deploy --copy-config --name uipe-vision-svc-bench   # if app not yet created
-fly deploy --config fly.toml
-```
-Expected: image builds, an A10 machine boots, `fly status` shows it running. Model load happens on first request (warming).
-
-- [ ] **Step 2: Health check**
-
-Run: `curl https://uipe-vision-svc-bench.fly.dev/v1/health`
-Expected: `{"ready": false, ...}` initially, then `{"ready": true, ...}` after the model finishes loading (~30–60s).
-
-- [ ] **Step 3: Run the benchmark**
-
-Run: `python bench/run_bench.py --base-url https://uipe-vision-svc-bench.fly.dev`
-Expected: a scorecard table + `RESULT: PASS` or `FAIL`.
-
-- [ ] **Step 4: Record the decision**
-
-Write `bench/SCORECARD.md` with the date, model_id, the table, mean recall, p95 latency, and the decision (Qwen confirmed / challenger needed / vision-degraded). This is the Unit-0-lite output the spec calls for.
-
-- [ ] **Step 5: If FAIL — challenge** (only if needed)
-
-```bash
-fly secrets set VISION_MODEL_ID=OpenGVLab/InternVL2_5-8B --app uipe-vision-svc-bench
-fly deploy --config fly.toml
-python bench/run_bench.py --base-url https://uipe-vision-svc-bench.fly.dev
-```
-Repeat with Florence-2 if needed; pick the best, or invoke the vision-degraded escape hatch and document it. Update `SCORECARD.md`.
-
-- [ ] **Step 6: Tear down (stop billing)**
-
-```bash
-fly apps destroy uipe-vision-svc-bench --yes
-```
-Expected: app destroyed.
-
-- [ ] **Step 7: Commit the scorecard**
-
-```bash
-git add packages/vision-svc/bench/SCORECARD.md
-git commit -m "docs(vision-svc): Unit-0-lite scorecard + model decision"
-```
+> **⚠️ SUPERSEDED — Fly is dead.** Replaced by **Task 12′** in the [substrate-pivot amendment](../specs/2026-06-08-phase2-substrate-pivot-amendment.md) §4 — same shape (deploy → bench → score → record `bench/SCORECARD.md`) on the chosen substrate, minus Fly spin-up/`fly apps destroy` (scale-to-zero). Blocked on the §3 substrate decision + the golden-set TODO.
+>
+> The original Fly deploy/health/challenge/teardown commands (`fly launch` / `fly deploy` / `fly secrets set` / `fly apps destroy`) were **excised here to avoid an agent running dead infra** from a retrieved chunk. They remain verbatim in git history at commit `2da9816` (PR #21) for audit. The model-decision logic (Qwen confirmed / challenger / vision-degraded) is unchanged and lives in Task 12′.
 
 ---
 
@@ -1367,5 +1273,5 @@ git commit -m "docs(vision-svc): Unit-0-lite scorecard + model decision"
 - `pnpm -F @uipe/contracts exec vitest run` green; `pnpm -r exec -- tsc --noEmit` clean.
 - `cd packages/vision-svc && python -m pytest` green (config, schema-fixtures, mapping, handler, scoring) — all CPU, no model.
 - The same canonical fixtures validate on both the TS (zod) and Python (Pydantic) sides.
-- An ephemeral A10 deploy serves `/v1/analyze`; `run_bench.py` produces a scorecard; the model decision is recorded in `SCORECARD.md`; the ephemeral app is destroyed.
-- No persistent Fly deploy, no session-host wiring, no `/v1/flow`, no OmniParser removal (those are Phases 3–4 and the optical-flow phase).
+- A deploy on the chosen substrate (amendment Task 12′) serves `/v1/analyze`; `run_bench.py` produces a scorecard; the model decision is recorded in `SCORECARD.md`.
+- No persistent deploy, no session-host wiring, no `/v1/flow`, no OmniParser removal (those are Phases 3–4 and the optical-flow phase).
