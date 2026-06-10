@@ -473,6 +473,8 @@ export function wrapUntrusted(body: string): string {
 
 ### Task 2.4: Label allowlist + caps in vision-svc mapping (`vsv-4`)
 
+> **Implemented 2026-06-09** on `security/track2-untrusted-boundary` as specced. Applies to BOTH vision backends — `app/main.py` (Qwen) and `app/hosted.py` both route model output through `parse_qwen_output`. Also coerces a non-bool `is_interactable` to `None` (a non-bool there would otherwise raise a Pydantic error and crash the parse). 33 vision-svc pytest green (3 new).
+
 **Files:**
 - Modify: `packages/vision-svc/app/mapping.py:35-49`
 - Test: `packages/vision-svc/tests/test_mapping.py` (extend)
