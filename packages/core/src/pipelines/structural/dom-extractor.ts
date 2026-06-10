@@ -5,11 +5,24 @@ import { createLogger } from '../../utils/logger.js';
 
 const logger = createLogger('DOMExtractor');
 
+// inj-5: bound extraction so a hostile page cannot exhaust memory/CPU with a
+// huge DOM, or smuggle megabyte-scale strings through accessibility attributes.
+const MAX_NODES = 5000;
+const MAX_NAME_LENGTH = 200;
+
+/**
+ * Derive an element's accessible name (aria-label -> title -> alt), capped so a
+ * malicious page can't inject an oversized string. (security: inj-5)
+ */
+export function deriveName(attributes: Record<string, string>): string | undefined {
+  return (attributes['aria-label'] ?? attributes['title'] ?? attributes['alt'])?.slice(0, MAX_NAME_LENGTH);
+}
+
 export async function extractDOMStructure(page: Page): Promise<StructuralNode[]> {
   logger.info('Extracting DOM structure');
   const viewport = page.viewportSize() ?? { width: 1280, height: 720 };
 
-  const rawNodes = await page.evaluate(() => {
+  const { rawNodes, totalNodeCount } = await page.evaluate((maxNodes) => {
     let idCounter = 0;
     const nodeMap = new Map<Element, string>();
 
@@ -21,7 +34,8 @@ export async function extractDOMStructure(page: Page): Promise<StructuralNode[]>
       return id;
     }
 
-    return Array.from(document.querySelectorAll('*')).map(el => {
+    const allElements = Array.from(document.querySelectorAll('*'));
+    const collected = allElements.slice(0, maxNodes).map(el => {
       const rect = el.getBoundingClientRect();
       const computed = window.getComputedStyle(el);
       const attributes: Record<string, string> = {};
@@ -55,7 +69,12 @@ export async function extractDOMStructure(page: Page): Promise<StructuralNode[]>
         isSelected: attributes['aria-selected'] !== undefined ? attributes['aria-selected'] === 'true' : undefined,
       };
     });
-  });
+    return { rawNodes: collected, totalNodeCount: allElements.length };
+  }, MAX_NODES);
+
+  if (totalNodeCount > MAX_NODES) {
+    logger.warn('DOM truncated beyond node cap', { totalNodeCount, cap: MAX_NODES });
+  }
 
   return rawNodes.map(raw => {
     const visible = isElementVisible(raw.style, raw.rect, viewport);
@@ -66,7 +85,7 @@ export async function extractDOMStructure(page: Page): Promise<StructuralNode[]>
       id: raw.id,
       tag: raw.tag,
       role: raw.attributes['role'],
-      name: raw.attributes['aria-label'] ?? raw.attributes['title'] ?? raw.attributes['alt'],
+      name: deriveName(raw.attributes),
       text: raw.text,
       boundingBox,
       computedStyle: {

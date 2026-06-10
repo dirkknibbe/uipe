@@ -455,6 +455,10 @@ export function wrapUntrusted(body: string): string {
 
 ### Task 2.3: Cap extraction sizes (`inj-5`)
 
+> **Implemented 2026-06-09** on `security/track2-untrusted-boundary`. Notes on the implementation:
+> - **`deriveName(attributes)` exported helper** caps `aria-label`/`title`/`alt` to 200 — focused + unit-tested (4 tests in `tests/unit/pipelines/structural/dom-extractor.test.ts`) rather than an inline `.slice` on line 69.
+> - **Node-count cap `MAX_NODES = 5000`**, sliced inside `page.evaluate`; on overflow it **logs a warning** (`logger.warn`) instead of injecting a marker node — a synthetic node would flow through fusion/serializer/component-index with side effects. Surfacing truncation to the consuming agent (e.g. a server-boundary note) is a deferred follow-up.
+
 **Files:** Modify `packages/core/src/pipelines/structural/dom-extractor.ts:69` (and add a node-count cap in the extractor).
 
 - [ ] **Step 1: Failing test** — `aria-label`/`title`/`alt` get capped and node count is bounded. Test the pure mapping function with a synthetic raw element carrying a 50 KB name.
