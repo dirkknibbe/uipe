@@ -1,6 +1,7 @@
 import type { Page } from 'playwright';
 import type { BrowserAction } from '../types/index.js';
 import { createLogger } from '../utils/logger.js';
+import { assertNavigableUrl } from '../utils/url-guard.js';
 
 const logger = createLogger('ActionExecutor');
 
@@ -38,6 +39,7 @@ export async function executeAction(page: Page, action: BrowserAction): Promise<
       await page.waitForTimeout(action.ms);
       break;
     case 'navigate':
+      assertNavigableUrl(action.url); // mcp-1, web-1 — guard the act:navigate goto path too
       await page.goto(action.url, { waitUntil: 'domcontentloaded' });
       break;
     case 'back':

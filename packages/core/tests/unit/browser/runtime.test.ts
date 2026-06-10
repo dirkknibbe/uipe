@@ -68,7 +68,8 @@ describe('BrowserRuntime', () => {
 
   it('captures console error messages', async () => {
     await runtime.launch();
-    await runtime.navigate('data:text/html,<script>console.error("test-error-msg")</script>');
+    // setContent (not a data: navigate) — url-guard now blocks data: URLs (mcp-1/web-1)
+    await runtime.getPage().setContent('<script>console.error("test-error-msg")</script>');
     // give the page a moment to emit the console event
     await new Promise(r => setTimeout(r, 100));
     const logs = runtime.getConsoleLogs();
@@ -80,7 +81,7 @@ describe('BrowserRuntime', () => {
 
   it('captures console warning messages', async () => {
     await runtime.launch();
-    await runtime.navigate('data:text/html,<script>console.warn("test-warn-msg")</script>');
+    await runtime.getPage().setContent('<script>console.warn("test-warn-msg")</script>');
     await new Promise(r => setTimeout(r, 100));
     const logs = runtime.getConsoleLogs();
     const warn = logs.find(l => l.type === 'warning');
@@ -91,8 +92,8 @@ describe('BrowserRuntime', () => {
   it('captures failed network requests (connection-level)', async () => {
     await runtime.launch();
     // image pointing at a port nothing is listening on → requestfailed
-    await runtime.navigate(
-      'data:text/html,<img src="http://localhost:19999/nope.png">'
+    await runtime.getPage().setContent(
+      '<img src="http://localhost:19999/nope.png">'
     );
     await new Promise(r => setTimeout(r, 500));
     const errors = runtime.getNetworkErrors();
@@ -121,7 +122,7 @@ describe('BrowserRuntime', () => {
 
   it('clears captured logs', async () => {
     await runtime.launch();
-    await runtime.navigate('data:text/html,<script>console.error("x")</script>');
+    await runtime.getPage().setContent('<script>console.error("x")</script>');
     await new Promise(r => setTimeout(r, 100));
     runtime.clearLogs();
     expect(runtime.getConsoleLogs()).toHaveLength(0);
@@ -132,7 +133,7 @@ describe('BrowserRuntime', () => {
     await runtime.launch();
     // Generate many console messages
     const script = Array.from({ length: 120 }, (_, i) => `console.log("msg-${i}")`).join(';');
-    await runtime.navigate(`data:text/html,<script>${script}</script>`);
+    await runtime.getPage().setContent(`<script>${script}</script>`);
     await new Promise(r => setTimeout(r, 200));
     const logs = runtime.getConsoleLogs();
     expect(logs.length).toBeLessThanOrEqual(1000);

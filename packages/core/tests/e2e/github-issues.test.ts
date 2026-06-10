@@ -1,11 +1,26 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { BrowserRuntime } from '../../src/browser/runtime.js';
 import { executeAction } from '../../src/browser/actions.js';
+import { startFixtureServer, type FixtureServer } from './fixture-server.js';
 import * as path from 'path';
 import { fileURLToPath } from 'url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const fixtureUrl = `file://${path.resolve(__dirname, 'fixtures/test-page.html')}`;
+const fixturesDir = path.resolve(__dirname, 'fixtures');
+
+// Serve fixtures over http (url-guard blocks file: now). This file-level
+// beforeAll runs before every describe-level beforeAll, so fixtureUrl is set.
+let fixtureServer: FixtureServer;
+let fixtureUrl: string;
+
+beforeAll(async () => {
+  fixtureServer = await startFixtureServer(fixturesDir);
+  fixtureUrl = `${fixtureServer.baseUrl}/test-page.html`;
+});
+
+afterAll(async () => {
+  await fixtureServer.close();
+});
 
 describe('Issue #1 — setViewport', () => {
   let runtime: BrowserRuntime;

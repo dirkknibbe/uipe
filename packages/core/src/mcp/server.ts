@@ -12,6 +12,9 @@ import { AffordanceEngine } from '../pipelines/affordance/index.js';
 import { VisualPipeline, type VisualPipelineConfig } from '../pipelines/visual/index.js';
 import { FrameCapture } from '../pipelines/visual/frame-capture.js';
 import { toJSON, toCompact } from '../pipelines/fusion/serializer.js';
+import { compileExcludePattern } from '../utils/safe-regex.js';
+import { actInputSchema } from './act-schema.js';
+import { sanitizeToolError } from '../utils/sanitize-error.js';
 import { affordanceToText, formatVisualAnalysis } from './serializer.js';
 import { Config } from '../config.js';
 import type { AnalysisDepth } from '../types/index.js';
@@ -256,34 +259,25 @@ export function createServer(config: ServerConfig = {}): McpServer {
     {
       title: 'Execute Browser Action',
       description: 'Execute an action in the browser. After execution the scene is re-captured and returned along with any detected UI transition.',
-      inputSchema: z.object({
-        type: z.enum(['click', 'clickSelector', 'type', 'scroll', 'hover', 'wait', 'navigate', 'back', 'pressKey', 'setViewport'])
-          .describe('Action type to execute'),
-        x: z.number().optional().describe('X coordinate (for click, hover)'),
-        y: z.number().optional().describe('Y coordinate (for click, hover)'),
-        selector: z.string().optional().describe('CSS selector (for clickSelector, type)'),
-        text: z.string().optional().describe('Text to type (for type action)'),
-        direction: z.enum(['up', 'down']).optional().describe('Scroll direction (for scroll)'),
-        amount: z.number().optional().describe('Scroll amount in pixels (for scroll)'),
-        ms: z.number().optional().describe('Wait duration in milliseconds (for wait)'),
-        url: z.string().optional().describe('URL to navigate to (for navigate)'),
-        key: z.string().optional().describe('Key to press (for pressKey, e.g. "Enter", "Escape")'),
-        width: z.number().optional().describe('Viewport width in pixels (for setViewport)'),
-        height: z.number().optional().describe('Viewport height in pixels (for setViewport)'),
-        visible: z.boolean().optional().describe('Filter to visible elements only (default true, for clickSelector)'),
-      }),
+      inputSchema: actInputSchema, // bounded numeric args, extracted to act-schema.ts (mcp-3)
     },
     async (input) => {
-      await ensureLaunched();
-      await runtime.executeAction(input as import('../types/browser-actions.js').BrowserAction);
-      const graph = await captureGraph();
-      const transition = tracker.observe(graph);
-      let text = `Action executed: ${input.type}\n\n` + toCompact(graph);
-      if (transition) {
-        text += `\n\n[Transition: ${transition.type}]`;
+      try {
+        await ensureLaunched();
+        await runtime.executeAction(input as import('../types/browser-actions.js').BrowserAction);
+        const graph = await captureGraph();
+        const transition = tracker.observe(graph);
+        let text = `Action executed: ${input.type}\n\n` + toCompact(graph);
+        if (transition) {
+          text += `\n\n[Transition: ${transition.type}]`;
+        }
+        scheduleIdleDrain();
+        return { content: [{ type: 'text' as const, text }] };
+      } catch (e) {
+        // mcp-4: log full error internally, return a host-path-free message to the client
+        log.error('act handler failed', { action: input.type, err: e });
+        return { content: [{ type: 'text' as const, text: `Action failed: ${sanitizeToolError(e)}` }], isError: true };
       }
-      scheduleIdleDrain();
-      return { content: [{ type: 'text' as const, text }] };
     },
   );
 
@@ -305,8 +299,9 @@ export function createServer(config: ServerConfig = {}): McpServer {
       const logs = runtime.getConsoleLogs();
       let filtered = type === 'all' ? logs : logs.filter(l => l.type === type);
       if (excludePattern) {
-        const re = new RegExp(excludePattern);
-        filtered = filtered.filter(l => !re.test(l.text));
+        const re = compileExcludePattern(excludePattern);
+        // over-long/invalid pattern -> no exclusion applied (bounded, no throw/ReDoS)
+        if (re) filtered = filtered.filter(l => !re.test(l.text));
       }
       if (filtered.length === 0) {
         return { content: [{ type: 'text' as const, text: `No ${type === 'all' ? '' : type + ' '}console messages captured.` }] };
