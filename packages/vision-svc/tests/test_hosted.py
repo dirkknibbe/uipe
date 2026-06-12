@@ -3,7 +3,7 @@ import asyncio
 import app.hosted as hosted
 from app.config import Config
 from app.hosted import HostedApiAnalyzer
-from app.mapping import parse_qwen_output
+from app.mapping import parse_detection_output
 
 
 class _FakeResponse:
@@ -73,7 +73,7 @@ def test_hosted_infer_builds_openai_vision_request_and_extracts_content(monkeypa
     )
     assert any(p.get("type") == "text" and "JSON array" in p["text"] for p in content)
     # the returned text flows through the SAME mapping the GPU path uses
-    elements = parse_qwen_output(raw)
+    elements = parse_detection_output(raw)
     assert elements[0].label == "button"
 
 
