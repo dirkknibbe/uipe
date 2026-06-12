@@ -9,7 +9,7 @@ class HostedApiAnalyzer:
     DeepInfra / OpenRouter). Implements the same duck-typed Analyzer protocol as
     QwenAnalyzer, so it drops into create_app() unchanged. No GPU, no warmup — it
     runs anywhere (including the Intel Mac), which is why it's the test-today path.
-    The model's raw text is returned verbatim; the handler's parse_qwen_output
+    The model's raw text is returned verbatim; the handler's parse_detection_output
     turns it into /v1 elements, so the contract + mapping are fully reused.
     """
 

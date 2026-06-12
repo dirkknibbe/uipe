@@ -404,6 +404,11 @@ Run: `pnpm -F @uipe/core exec vitest run --reporter=verbose`
 
 ### Task 2.2: Untrusted-content envelope on perception output (`inj-1`, `web-2`, `inj-3`, `inj-4`)
 
+> **Implemented 2026-06-09** on `security/track2-untrusted-boundary`. Deviations from the sample below, by design:
+> - **Defang via HTML-entity encoding** (`&lt;/untrusted_page_content&gt;`), not the zero-width-space sample — visible in source (no invisible chars) and reads as inert text to the consuming agent, which is stronger against LLM injection. Same `wrapUntrusted` contract; 5 tests in `tests/unit/untrusted-envelope.test.ts`.
+> - **`get_scene` wraps BOTH `toCompact` and `toJSON`** paths — same page-derived scene data; wrapping only the compact path would leave a trivial `format="json"` bypass.
+> - **Deferred (follow-up, Task 2.5 candidate):** `detect_elements` (vision-derived labels JSON) and the JSON state tools `get_timeline` / `get_component_index` / `compare_states` also surface page-derived substrings but are NOT yet enveloped. This task scoped exactly the 6 tools in the "Modify" line below; the deferral is intentional, not an oversight.
+
 **Files:**
 - Modify: `packages/core/src/mcp/server.ts` — the text returned by `navigate`/`get_scene`/`act`/`get_console_logs`/`get_network_errors`/`analyze_visual`.
 - Modify each tool `description` to state the boundary.
@@ -450,6 +455,10 @@ export function wrapUntrusted(body: string): string {
 
 ### Task 2.3: Cap extraction sizes (`inj-5`)
 
+> **Implemented 2026-06-09** on `security/track2-untrusted-boundary`. Notes on the implementation:
+> - **`deriveName(attributes)` exported helper** caps `aria-label`/`title`/`alt` to 200 — focused + unit-tested (4 tests in `tests/unit/pipelines/structural/dom-extractor.test.ts`) rather than an inline `.slice` on line 69.
+> - **Node-count cap `MAX_NODES = 5000`**, sliced inside `page.evaluate`; on overflow it **logs a warning** (`logger.warn`) instead of injecting a marker node — a synthetic node would flow through fusion/serializer/component-index with side effects. Surfacing truncation to the consuming agent (e.g. a server-boundary note) is a deferred follow-up.
+
 **Files:** Modify `packages/core/src/pipelines/structural/dom-extractor.ts:69` (and add a node-count cap in the extractor).
 
 - [ ] **Step 1: Failing test** — `aria-label`/`title`/`alt` get capped and node count is bounded. Test the pure mapping function with a synthetic raw element carrying a 50 KB name.
@@ -463,6 +472,10 @@ export function wrapUntrusted(body: string): string {
 - [ ] **Step 5: Commit.** `git commit -m "fix(security): cap extracted label sizes + node count (inj-5)"`
 
 ### Task 2.4: Label allowlist + caps in vision-svc mapping (`vsv-4`)
+
+> **Implemented 2026-06-09** on `security/track2-untrusted-boundary` as specced. Applies to BOTH vision backends — `app/main.py` (Qwen) and `app/hosted.py` both route model output through the shared parser. Also coerces a non-bool `is_interactable` to `None` (a non-bool there would otherwise raise a Pydantic error and crash the parse). 33 vision-svc pytest green (3 new).
+>
+> **Renamed 2026-06-11** (same branch, follow-up commit): `parse_qwen_output` → `parse_detection_output`, `QwenParseError` → `DetectionParseError`, `tests/fixtures/qwen_raw/` → `vlm_raw/`. The parser is the model-neutral seam both backends route through — it parses the detection contract defined by `app/prompt.py`, not anything Qwen-specific — so the name now anchors to the contract, not the first model that implemented it. Sample code below predates the rename.
 
 **Files:**
 - Modify: `packages/vision-svc/app/mapping.py:35-49`

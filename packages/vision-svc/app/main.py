@@ -9,7 +9,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
 from app.config import Config
-from app.mapping import parse_qwen_output
+from app.mapping import parse_detection_output
 from app.schema import VisionAnalyzeRequest, VisionAnalyzeResponse
 
 log = logging.getLogger("vision-svc")
@@ -56,7 +56,7 @@ def create_app(analyzer: Analyzer, timeout_s: float | None = None) -> FastAPI:
             raw = await asyncio.wait_for(
                 analyzer.infer(req.png_base64, req.regions), timeout=timeout
             )
-            elements = parse_qwen_output(raw)
+            elements = parse_detection_output(raw)
             return VisionAnalyzeResponse(
                 request_id=rid, status="ok", elements=elements,
                 model_id=analyzer.model_id, latency_ms=elapsed(),

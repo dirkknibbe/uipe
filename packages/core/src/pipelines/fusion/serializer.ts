@@ -29,6 +29,15 @@ function isCollapsibleWrapper(node: SceneNode): boolean {
   );
 }
 
+// inj-2: label/role/text are page-derived (lowest trust). Strip the compact
+// grammar's delimiters (`[` `]` `"`) and any newline so a malicious page can't
+// forge tree rows or break the label[role] structure, then cap length so a
+// single field can't flood the consuming agent's context.
+const FIELD_CAP = 80;
+function safeField(s: string): string {
+  return s.replace(/[[\]\n\r"]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, FIELD_CAP);
+}
+
 export function toCompact(graph: SceneGraph): string {
   const nodeMap = new Map(graph.nodes.map(n => [n.id, n]));
   const lines: string[] = [];
@@ -61,7 +70,7 @@ export function toCompact(graph: SceneGraph): string {
     if (shouldSkip(current)) return;
 
     const indent = '  '.repeat(depth);
-    const parts: string[] = [`${current.label}[${current.role}`];
+    const parts: string[] = [`${safeField(current.label)}[${safeField(current.role)}`];
     if (current.interactionType !== 'static') parts[0] += `,${current.interactionType}`;
     if (current.isDisabled) parts[0] += ',disabled';
     parts[0] += ']';
@@ -69,7 +78,7 @@ export function toCompact(graph: SceneGraph): string {
     // text from the DOM scraper, which caused massive duplication (~8x) on any
     // real page — every ancestor repeated the same text preview.
     const isLeaf = current.children.length === 0;
-    if (current.text && isLeaf) parts.push(`:"${current.text.slice(0, 40)}"`);
+    if (current.text && isLeaf) parts.push(`:"${safeField(current.text).slice(0, 40)}"`);
     lines.push(`${indent}${parts.join('')}`);
 
     // Don't recurse into SVG internals. An icon's path/rect/circle children
