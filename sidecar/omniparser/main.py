@@ -9,8 +9,10 @@ from fastapi import FastAPI, File, UploadFile, HTTPException
 from fastapi.responses import JSONResponse
 import uvicorn
 from PIL import Image
+import hashlib
 import io
 import os
+import pathlib
 import torch
 from ultralytics import YOLO
 from transformers import AutoProcessor, AutoModelForCausalLM
@@ -23,6 +25,28 @@ app = FastAPI(title="OmniParser V2 Sidecar")
 
 # Pillow expands a few KB of compressed data into gigabytes of pixels unless
 # bounded. Keep MAX_IMAGE_PIXELS above our own limit so our check reports first.
+# Pinned upstream revision. trust_remote_code below executes code fetched from
+# this repo, so pinning the revision is what stops a future commit there from
+# running here. Re-pin deliberately, never float to main.
+FLORENCE_BASE_REVISION = "5ca5edf5bd017b9919c05d08aebef5e4c7ac3bac"
+
+# Loading an ultralytics .pt unpickles it, which executes arbitrary code. Refuse
+# anything but the exact reviewed artifact from OmniParser-v2.0's pinned revision.
+_YOLO_WEIGHTS = pathlib.Path("weights/icon_detect/model.pt")
+_YOLO_SHA256 = "dab3d4351ad00b035db829909a4db98354d5a90f6990e4ac00222a9a95d4bf57"
+
+
+def _verify_yolo_weights() -> None:
+    if not _YOLO_WEIGHTS.exists():
+        raise RuntimeError(f"YOLO weights missing at {_YOLO_WEIGHTS}")
+    digest = hashlib.sha256(_YOLO_WEIGHTS.read_bytes()).hexdigest()
+    if digest != _YOLO_SHA256:
+        raise RuntimeError(
+            "YOLO weights checksum mismatch — refusing to load. "
+            f"expected {_YOLO_SHA256}, got {digest}"
+        )
+
+
 Image.MAX_IMAGE_PIXELS = 4096 * 4096
 MAX_PIXELS = 3840 * 2160  # 4K
 
@@ -44,7 +68,8 @@ async def load_models():
 
     try:
         # YOLOv8 for element detection
-        yolo_model = YOLO("weights/icon_detect/model.pt")
+        _verify_yolo_weights()
+        yolo_model = YOLO(str(_YOLO_WEIGHTS))
         logger.info("YOLOv8 model loaded")
     except Exception as e:
         logger.error(f"Failed to load YOLOv8 model: {e}")
@@ -53,9 +78,16 @@ async def load_models():
     try:
         # Florence-2 for icon captioning
         # Processor from base repo (OmniParser weights don't include tokenizer files)
+        # trust_remote_code cannot be dropped here yet: OmniParser's fine-tuned
+        # checkpoint declares an inner text_config.model_type of "florence2_language",
+        # which transformers' native florence2 implementation does not know
+        # (KeyError on load), and native florence2 maps to ImageTextToText rather
+        # than CausalLM. Pinning the revision bounds the blast radius until the
+        # modeling file is vendored. See the security remediation plan, task 3.3.
         caption_processor = AutoProcessor.from_pretrained(
             "microsoft/Florence-2-base",
-            trust_remote_code=True
+            revision=FLORENCE_BASE_REVISION,
+            trust_remote_code=True,
         )
         # Model from local fine-tuned weights
         caption_model = AutoModelForCausalLM.from_pretrained(
