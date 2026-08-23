@@ -8,6 +8,7 @@ Usage: python bench/run_bench.py --base-url <substrate-url-or-localhost>
 import argparse
 import base64
 import json
+import os
 import sys
 import time
 from pathlib import Path
@@ -23,8 +24,11 @@ P95_LATENCY_MS_BAR = 8000
 
 def _post(base_url: str, png_b64: str) -> dict:
     body = json.dumps({"api_version": "v1", "png_base64": png_b64, "regions": []}).encode()
-    req = urllib.request.Request(f"{base_url}/v1/analyze", data=body,
-                                 headers={"Content-Type": "application/json"})
+    headers = {"Content-Type": "application/json"}
+    token = os.environ.get("VISION_SVC_TOKEN")
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    req = urllib.request.Request(f"{base_url}/v1/analyze", data=body, headers=headers)
     with urllib.request.urlopen(req, timeout=60) as r:
         return json.loads(r.read())
 

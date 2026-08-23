@@ -1,10 +1,12 @@
 import asyncio
+import hmac
 import logging
+import os
 import time
 import uuid
-from typing import Protocol
+from typing import Optional, Protocol
 
-from fastapi import FastAPI, Request
+from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
@@ -13,6 +15,22 @@ from app.mapping import parse_detection_output
 from app.schema import VisionAnalyzeRequest, VisionAnalyzeResponse
 
 log = logging.getLogger("vision-svc")
+
+
+def _require_bearer(authorization: Optional[str] = Header(default=None)) -> None:
+    """Gate /v1/analyze when VISION_SVC_TOKEN is set.
+
+    Read at request time, not app-build time, so the service picks up the
+    environment it is actually running under. With no token configured the
+    endpoint stays open, which keeps purely-local single-tenant use working.
+    """
+    token = os.environ.get("VISION_SVC_TOKEN")
+    if not token:
+        return
+    expected = f"Bearer {token}"
+    # compare_digest: constant time, so a wrong token leaks no prefix length
+    if authorization is None or not hmac.compare_digest(authorization, expected):
+        raise HTTPException(status_code=401, detail="invalid or missing bearer token")
 
 
 class Analyzer(Protocol):
@@ -40,7 +58,7 @@ def create_app(analyzer: Analyzer, timeout_s: float | None = None) -> FastAPI:
     async def health():
         return {"ready": analyzer.ready, "model_id": analyzer.model_id}
 
-    @app.post("/v1/analyze")
+    @app.post("/v1/analyze", dependencies=[Depends(_require_bearer)])
     async def analyze(req: VisionAnalyzeRequest) -> VisionAnalyzeResponse:
         rid = req.request_id or str(uuid.uuid4())
 
@@ -78,8 +96,6 @@ def create_app(analyzer: Analyzer, timeout_s: float | None = None) -> FastAPI:
 
 
 def build_default_app() -> FastAPI:
-    import os
-
     cfg = Config.from_env(os.environ)
     backend = os.environ.get("VISION_BACKEND", "qwen")
     if backend == "hosted":
