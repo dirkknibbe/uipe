@@ -13,11 +13,15 @@ class HostedApiAnalyzer:
     turns it into /v1 elements, so the contract + mapping are fully reused.
     """
 
-    def __init__(self, cfg: Config):
+    def __init__(self, cfg: Config, timeout_s: float = 60.0, max_tokens: int = 1024):
         self.cfg = cfg
         self.model_id = cfg.hosted_model
         self._base_url = cfg.hosted_base_url.rstrip("/")
         self._api_key = cfg.hosted_api_key
+        self._timeout_s = timeout_s  # client-side only; the handler's own cap still applies
+        # 1024 truncates a full-page detection mid-array, which the parser rejects
+        # outright rather than salvaging — raise it for dense screenshots.
+        self._max_tokens = max_tokens
 
     @property
     def ready(self) -> bool:
@@ -27,7 +31,7 @@ class HostedApiAnalyzer:
         payload = {
             "model": self.model_id,
             "temperature": 0,
-            "max_tokens": 1024,
+            "max_tokens": self._max_tokens,
             "messages": [
                 {
                     "role": "user",
@@ -45,7 +49,7 @@ class HostedApiAnalyzer:
             "Authorization": f"Bearer {self._api_key}",
             "Content-Type": "application/json",
         }
-        async with httpx.AsyncClient(timeout=60.0) as client:
+        async with httpx.AsyncClient(timeout=self._timeout_s) as client:
             resp = await client.post(
                 f"{self._base_url}/chat/completions", json=payload, headers=headers
             )
