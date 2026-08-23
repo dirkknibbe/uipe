@@ -21,6 +21,11 @@ logger = logging.getLogger(__name__)
 
 app = FastAPI(title="OmniParser V2 Sidecar")
 
+# Pillow expands a few KB of compressed data into gigabytes of pixels unless
+# bounded. Keep MAX_IMAGE_PIXELS above our own limit so our check reports first.
+Image.MAX_IMAGE_PIXELS = 4096 * 4096
+MAX_PIXELS = 3840 * 2160  # 4K
+
 # Force CPU — no CUDA on this Intel Mac
 device = "cpu"
 
@@ -71,7 +76,10 @@ async def parse_screenshot(image: UploadFile = File(...)):
 
     try:
         img_bytes = await image.read()
-        img = Image.open(io.BytesIO(img_bytes)).convert("RGB")
+        img = Image.open(io.BytesIO(img_bytes))  # lazy: .size reads the header only
+        if img.size[0] * img.size[1] > MAX_PIXELS:
+            raise ValueError(f"image exceeds max dimensions: {img.size[0]}x{img.size[1]}")
+        img = img.convert("RGB")
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Invalid image: {e}")
 

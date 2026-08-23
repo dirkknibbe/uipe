@@ -1,5 +1,12 @@
+import math
 from typing import Literal, Optional
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
+
+# A 1280x720 lossless PNG sits far under 4 MB, so a 16 MB base64 ceiling leaves
+# 4K headroom while still bounding what one request can make us allocate.
+MAX_PNG_BASE64 = 16_000_000
+MAX_REGIONS = 64
+MAX_REQUEST_ID = 200
 
 VisionStatus = Literal["ok", "warming", "degraded"]
 VisionReason = Literal["model_loading", "inference_timeout", "inference_error", "unreachable"]
@@ -10,6 +17,14 @@ class BBox(BaseModel):
     y: float
     w: float
     h: float
+
+    @field_validator("x", "y", "w", "h")
+    @classmethod
+    def _finite(cls, v: float) -> float:
+        # inf/nan propagate silently through downstream geometry instead of failing
+        if not math.isfinite(v):
+            raise ValueError("coordinate must be finite")
+        return v
 
 
 class VisionElement(BaseModel):
@@ -23,9 +38,9 @@ class VisionElement(BaseModel):
 
 class VisionAnalyzeRequest(BaseModel):
     api_version: Literal["v1"]
-    png_base64: str
-    regions: list[BBox]
-    request_id: Optional[str] = None
+    png_base64: str = Field(max_length=MAX_PNG_BASE64)
+    regions: list[BBox] = Field(max_length=MAX_REGIONS)
+    request_id: Optional[str] = Field(default=None, max_length=MAX_REQUEST_ID)
 
 
 class VisionAnalyzeResponse(BaseModel):
