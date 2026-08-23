@@ -9,7 +9,10 @@ from fastapi import FastAPI, File, UploadFile, HTTPException
 from fastapi.responses import JSONResponse
 import uvicorn
 from PIL import Image
+import hashlib
 import io
+import os
+import pathlib
 import torch
 from ultralytics import YOLO
 from transformers import AutoProcessor, AutoModelForCausalLM
@@ -19,6 +22,33 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 app = FastAPI(title="OmniParser V2 Sidecar")
+
+# Pillow expands a few KB of compressed data into gigabytes of pixels unless
+# bounded. Keep MAX_IMAGE_PIXELS above our own limit so our check reports first.
+# Pinned upstream revision. trust_remote_code below executes code fetched from
+# this repo, so pinning the revision is what stops a future commit there from
+# running here. Re-pin deliberately, never float to main.
+FLORENCE_BASE_REVISION = "5ca5edf5bd017b9919c05d08aebef5e4c7ac3bac"
+
+# Loading an ultralytics .pt unpickles it, which executes arbitrary code. Refuse
+# anything but the exact reviewed artifact from OmniParser-v2.0's pinned revision.
+_YOLO_WEIGHTS = pathlib.Path("weights/icon_detect/model.pt")
+_YOLO_SHA256 = "dab3d4351ad00b035db829909a4db98354d5a90f6990e4ac00222a9a95d4bf57"
+
+
+def _verify_yolo_weights() -> None:
+    if not _YOLO_WEIGHTS.exists():
+        raise RuntimeError(f"YOLO weights missing at {_YOLO_WEIGHTS}")
+    digest = hashlib.sha256(_YOLO_WEIGHTS.read_bytes()).hexdigest()
+    if digest != _YOLO_SHA256:
+        raise RuntimeError(
+            "YOLO weights checksum mismatch — refusing to load. "
+            f"expected {_YOLO_SHA256}, got {digest}"
+        )
+
+
+Image.MAX_IMAGE_PIXELS = 4096 * 4096
+MAX_PIXELS = 3840 * 2160  # 4K
 
 # Force CPU — no CUDA on this Intel Mac
 device = "cpu"
@@ -38,7 +68,8 @@ async def load_models():
 
     try:
         # YOLOv8 for element detection
-        yolo_model = YOLO("weights/icon_detect/model.pt")
+        _verify_yolo_weights()
+        yolo_model = YOLO(str(_YOLO_WEIGHTS))
         logger.info("YOLOv8 model loaded")
     except Exception as e:
         logger.error(f"Failed to load YOLOv8 model: {e}")
@@ -47,9 +78,16 @@ async def load_models():
     try:
         # Florence-2 for icon captioning
         # Processor from base repo (OmniParser weights don't include tokenizer files)
+        # trust_remote_code cannot be dropped here yet: OmniParser's fine-tuned
+        # checkpoint declares an inner text_config.model_type of "florence2_language",
+        # which transformers' native florence2 implementation does not know
+        # (KeyError on load), and native florence2 maps to ImageTextToText rather
+        # than CausalLM. Pinning the revision bounds the blast radius until the
+        # modeling file is vendored. See the security remediation plan, task 3.3.
         caption_processor = AutoProcessor.from_pretrained(
             "microsoft/Florence-2-base",
-            trust_remote_code=True
+            revision=FLORENCE_BASE_REVISION,
+            trust_remote_code=True,
         )
         # Model from local fine-tuned weights
         caption_model = AutoModelForCausalLM.from_pretrained(
@@ -70,7 +108,10 @@ async def parse_screenshot(image: UploadFile = File(...)):
 
     try:
         img_bytes = await image.read()
-        img = Image.open(io.BytesIO(img_bytes)).convert("RGB")
+        img = Image.open(io.BytesIO(img_bytes))  # lazy: .size reads the header only
+        if img.size[0] * img.size[1] > MAX_PIXELS:
+            raise ValueError(f"image exceeds max dimensions: {img.size[0]}x{img.size[1]}")
+        img = img.convert("RGB")
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Invalid image: {e}")
 
@@ -132,4 +173,8 @@ async def health():
 
 
 if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=8100)
+    # Loopback by default. The sidecar has no auth of its own, so binding it
+    # off-host has to be a deliberate opt-in rather than the default.
+    host = os.environ.get("OMNIPARSER_HOST", "127.0.0.1")
+    port = int(os.environ.get("OMNIPARSER_PORT", "8100"))
+    uvicorn.run(app, host=host, port=port)

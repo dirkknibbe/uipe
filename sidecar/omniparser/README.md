@@ -33,8 +33,27 @@ pip install -r requirements.txt
 mkdir -p weights/icon_detect weights/icon_caption_florence
 
 # Download from HuggingFace (microsoft/OmniParser-v2.0)
-huggingface-cli download microsoft/OmniParser-v2.0 --local-dir weights/
+# Pinned revision: the sidecar unpickles these weights, so the artifact must be
+# the exact one that was reviewed. Do not drop --revision.
+huggingface-cli download microsoft/OmniParser-v2.0 \
+  --revision 6600256cb0f1b07651e3bc86166196307bad7e2d \
+  --local-dir weights/
 ```
+
+`main.py` verifies the YOLO checkpoint at startup and refuses to load on a
+mismatch:
+
+| File | SHA-256 |
+|---|---|
+| `weights/icon_detect/model.pt` | `dab3d4351ad00b035db829909a4db98354d5a90f6990e4ac00222a9a95d4bf57` |
+
+If you re-pin to a newer revision, update `_YOLO_SHA256` in `main.py` in the
+same commit, and say why in the message.
+
+The Florence-2 processor is pinned to revision
+`5ca5edf5bd017b9919c05d08aebef5e4c7ac3bac`. That call still passes
+`trust_remote_code=True` — see the comment in `main.py` for why it cannot be
+dropped for this checkpoint yet.
 
 The weights directory should look like:
 

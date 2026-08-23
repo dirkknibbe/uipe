@@ -2,8 +2,8 @@ import asyncio
 import base64
 import io
 import threading
-from PIL import Image
 from app.config import Config
+from app.images import decode_png
 from app.prompt import DETECTION_PROMPT
 
 
@@ -41,7 +41,7 @@ class QwenAnalyzer:
     def _infer_sync(self, png_base64: str) -> str:
         from qwen_vl_utils import process_vision_info
 
-        image = Image.open(io.BytesIO(base64.b64decode(png_base64))).convert("RGB")
+        image = decode_png(png_base64)
         messages = [{"role": "user", "content": [
             {"type": "image", "image": image},
             {"type": "text", "text": DETECTION_PROMPT},
