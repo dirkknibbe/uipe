@@ -16,3 +16,10 @@ sidecar/omniparser/.venv/
 *.pyc
 target/
 crates/uipe-vision/models/*.onnx
+
+# Review and audit output. Stays local: this repo is public, and the security
+# reports enumerate findings that are not all remediated yet.
+.review/
+
+# MCP server config carries API keys.
+.mcp.json
