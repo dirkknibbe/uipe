@@ -10,6 +10,7 @@ from fastapi.responses import JSONResponse
 import uvicorn
 from PIL import Image
 import io
+import os
 import torch
 from ultralytics import YOLO
 from transformers import AutoProcessor, AutoModelForCausalLM
@@ -132,4 +133,8 @@ async def health():
 
 
 if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=8100)
+    # Loopback by default. The sidecar has no auth of its own, so binding it
+    # off-host has to be a deliberate opt-in rather than the default.
+    host = os.environ.get("OMNIPARSER_HOST", "127.0.0.1")
+    port = int(os.environ.get("OMNIPARSER_PORT", "8100"))
+    uvicorn.run(app, host=host, port=port)
