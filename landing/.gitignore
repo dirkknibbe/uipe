@@ -12,3 +12,4 @@ tsconfig.tsbuildinfo
 # The repo root .gitignore wildcards *.png; keep reference screenshots tracked.
 !screenshots/
 !screenshots/**
+.vercel
