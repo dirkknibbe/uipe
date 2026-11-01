@@ -174,7 +174,7 @@ describe('AnimationCollector', () => {
         name: 'fade',
         startTime: performance.now() / 1000,
         playbackRate: 1,
-        source: { duration: 300, easing: 'linear' },
+        source: { duration: 300, iterations: 1, easing: 'linear' },
       },
     });
 
@@ -239,7 +239,7 @@ describe('AnimationCollector', () => {
           name: 'slide',
           startTime: performance.now() / 1000,
           playbackRate: 1,
-          source: { duration: 100, easing: 'linear' },
+          source: { duration: 100, iterations: 1, easing: 'linear' },
         },
       });
       await vi.advanceTimersByTimeAsync(0);
@@ -381,5 +381,67 @@ describe('AnimationCollector', () => {
     // Order: animation-start, then animation-end (canceled). NO animation-prediction.
     expect(types).toEqual(['animation-start', 'animation-end']);
     expect((events[1].payload as any).reason).toBe('canceled');
+  });
+});
+
+describe('AnimationCollector timing and target marker', () => {
+  const setup = async (cdp: CDPSession) => {
+    const page = makeMockPage(cdp);
+    const stream = new TemporalEventStream();
+    await stream.attach(page);
+    const collector = new AnimationCollector();
+    await collector.attach(page, stream);
+    return { stream, collector };
+  };
+  const startAnim = (handlers: Map<string, Function[]>, id: string, source: object) =>
+    handlers.get('Animation.animationStarted')![0]({
+      animation: { id, name: 'x', startTime: performance.now() / 1000, playbackRate: 1, source },
+    });
+  const fake = () => vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'Date', 'performance'] });
+
+  it('emits_end_after_all_iterations', async () => {
+    fake();
+    try {
+      const { cdp, handlers } = makeMockCdp();
+      const { stream } = await setup(cdp);
+      await startAnim(handlers, 'a', { duration: 200, iterations: 3, delay: 100, endDelay: 0 });
+      await vi.advanceTimersByTimeAsync(300);
+      expect(stream.getEvents().some((e) => e.type === 'animation-end')).toBe(false);
+      await vi.advanceTimersByTimeAsync(420);
+      const end = stream.getEvents().find((e) => e.type === 'animation-end')!;
+      expect(end.payload).toMatchObject({ animationId: 'a', reason: 'completed' });
+      const start = stream.getEvents().find((e) => e.type === 'animation-start')!;
+      expect(end.timestamp - start.timestamp).toBe(700);
+    } finally { vi.useRealTimers(); }
+  });
+
+  it('infinite_animation_never_emits_completed_end', async () => {
+    fake();
+    try {
+      const { cdp, handlers } = makeMockCdp();
+      const { stream } = await setup(cdp);
+      await startAnim(handlers, 'inf', { duration: 200 });
+      await vi.advanceTimersByTimeAsync(5000);
+      const events = stream.getEvents();
+      expect(events.find((e) => e.type === 'animation-start')!.payload).toMatchObject({ iterations: Infinity });
+      expect(events.some((e) => e.type === 'animation-end')).toBe(false);
+    } finally { vi.useRealTimers(); }
+  });
+
+  it('zero_duration_does_not_leak_active_entry', async () => {
+    const { cdp, handlers } = makeMockCdp();
+    const { collector } = await setup(cdp);
+    await startAnim(handlers, 'z', { duration: 0, iterations: 1 });
+    expect((collector as any).active.size).toBe(0);
+  });
+
+  it('start_payload_carries_target_marker_and_selector', async () => {
+    const { cdp, handlers } = makeMockCdpWithVerifier({
+      startReadResponse: { result: { value: { selector: 'div.modal', tag: 'div', marker: 'anim-1' } } },
+    });
+    const { stream } = await setup(cdp);
+    await startAnim(handlers, 'anim-1', { duration: 300, iterations: 1 });
+    const start = stream.getEvents().find((e) => e.type === 'animation-start')!;
+    expect(start.payload).toMatchObject({ target: 'div.modal', targetTag: 'div', targetMarker: 'anim-1' });
   });
 });

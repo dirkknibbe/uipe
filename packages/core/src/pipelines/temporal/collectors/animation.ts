@@ -1,5 +1,5 @@
 import type { Page, CDPSession } from 'playwright';
-import type { Collector } from './types.js';
+import type { Collector, AnimationStartPayload } from './types.js';
 import type { TemporalEventStream } from '../event-stream.js';
 import { AnimationVerifier } from '../verifiers/animation/verifier.js';
 
@@ -35,6 +35,10 @@ export class AnimationCollector implements Collector {
           ? normalizer.fromCdpMonotonicSeconds(a.startTime)
           : normalizer.fromPerformanceNow(performance.now());
         const duration = a.source?.duration ?? 0;
+        const iterations: number = a.source?.iterations ?? Infinity;
+        const delay: number = a.source?.delay ?? 0;
+        const endDelay: number = a.source?.endDelay ?? 0;
+        const totalMs = delay + duration * iterations + endDelay;
         const wallTimeAtStart = Date.now();
 
         const state: AnimationStartState = {
@@ -44,16 +48,20 @@ export class AnimationCollector implements Collector {
         };
         this.active.set(a.id, state);
 
+        const startPayload: AnimationStartPayload = {
+          animationId: a.id,
+          name: a.name,
+          duration,
+          easing: a.source?.easing,
+          iterations,
+          delay,
+          endDelay,
+        };
         stream.push({
           id: `anim-start-${++nextId}`,
           type: 'animation-start',
           timestamp: startTimestamp,
-          payload: {
-            animationId: a.id,
-            name: a.name,
-            duration,
-            easing: a.source?.easing,
-          },
+          payload: startPayload,
         });
 
         // Predict + emit prediction event.
@@ -63,7 +71,14 @@ export class AnimationCollector implements Collector {
         try {
           const cdp = this.cdp;
           if (cdp) {
-            const predPayload = await this.verifier.captureStart(cdp, params);
+            const predPayload = await this.verifier.captureStart(cdp, params, (t) => {
+              // The target is only known after the in-page read, which must not delay
+              // the start event; fill the already-pushed payload in place.
+              if (!this.active.has(a.id)) return;
+              if (t.selector) startPayload.target = t.selector;
+              if (t.tag) startPayload.targetTag = t.tag;
+              if (t.marker) startPayload.targetMarker = t.marker;
+            });
             // Race guard: if the animation was canceled while captureStart
             // awaited its CDP roundtrip, animationCanceled has already
             // cleared this.active[a.id] and pushed animation-end. Skip the
@@ -83,7 +98,10 @@ export class AnimationCollector implements Collector {
           console.warn(`AnimationCollector: prediction failed (${(err as Error).message})`);
         }
 
-        if (duration > 0) {
+        if (duration <= 0) {
+          // Nothing will ever end it; without this the entry leaks.
+          this.active.delete(a.id);
+        } else if (Number.isFinite(totalMs)) {
           state.completionTimer = setTimeout(async () => {
             let deviation = null;
             try {
@@ -97,13 +115,13 @@ export class AnimationCollector implements Collector {
             stream.push({
               id: `anim-end-${++nextId}`,
               type: 'animation-end',
-              timestamp: startTimestamp + duration,
+              timestamp: startTimestamp + totalMs,
               payload: deviation
                 ? { animationId: a.id, reason: 'completed', deviation }
                 : { animationId: a.id, reason: 'completed' },
             });
             this.active.delete(a.id);
-          }, duration + 16);
+          }, totalMs + 16);
         }
       });
 

@@ -15,7 +15,9 @@ interface PendingPrediction {
   objectId: string;
 }
 
-interface CapturedFromPage {
+export interface CapturedTarget { selector?: string; tag?: string; marker?: string }
+
+interface CapturedFromPage extends CapturedTarget {
   keyframes: Array<{ offset: number; [key: string]: unknown }>;
   timing: KeyframeTiming;
   bbox: { x: number; y: number; w: number; h: number } | null;
@@ -25,12 +27,17 @@ interface CapturedFromPage {
 // the target element's bounding rect. All work happens on the page; the host
 // only receives plain JSON.
 const READ_AT_START_SCRIPT = `
-  function() {
+  function(animationId) {
     const anim = this;
-    let bbox = null;
+    let bbox = null, selector, tag, marker;
     try {
       const target = anim.effect && anim.effect.target;
       if (target && typeof target.getBoundingClientRect === 'function') {
+        tag = target.tagName.toLowerCase();
+        selector = tag + (target.id ? '#' + CSS.escape(target.id) : '') +
+          Array.from(target.classList).slice(0, 3).map(function(c) { return '.' + CSS.escape(c); }).join('');
+        target.setAttribute('data-uipe-anim', animationId);
+        marker = animationId;
         const r = target.getBoundingClientRect();
         bbox = { x: r.x, y: r.y, w: r.width, h: r.height };
       }
@@ -38,7 +45,7 @@ const READ_AT_START_SCRIPT = `
     return {
       keyframes: anim.effect ? anim.effect.getKeyframes() : [],
       timing: anim.effect ? anim.effect.getComputedTiming() : {},
-      bbox,
+      bbox, selector, tag, marker,
     };
   }
 `;
@@ -123,6 +130,7 @@ export class AnimationVerifier {
   async captureStart(
     cdp: CDPSession,
     params: { animation: { id: string; source?: { duration?: number } } },
+    onTarget?: (target: CapturedTarget) => void,
   ): Promise<AnimationPredictionPayload> {
     const a = params.animation;
     const duration = a.source?.duration ?? 0;
@@ -153,6 +161,7 @@ export class AnimationVerifier {
       const res: any = await cdp.send('Runtime.callFunctionOn' as any, {
         objectId,
         functionDeclaration: READ_AT_START_SCRIPT,
+        arguments: [{ value: a.id }],
         returnByValue: true,
       } as any);
       captured = res?.result?.value as CapturedFromPage;
@@ -162,6 +171,7 @@ export class AnimationVerifier {
     } catch {
       return this.skipped(a.id, 'resolve-failed', expectedEndTimestamp);
     }
+    onTarget?.({ selector: captured.selector, tag: captured.tag, marker: captured.marker });
 
     if (!captured.bbox) {
       return this.skipped(a.id, 'no-target-node', expectedEndTimestamp);
