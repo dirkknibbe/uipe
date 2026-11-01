@@ -23,3 +23,6 @@ crates/uipe-vision/models/*.onnx
 
 # MCP server config carries API keys.
 .mcp.json
+
+# Superpowers scratch workspaces (brainstorm mockups, SDD ledgers)
+.superpowers/
