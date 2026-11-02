@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import type { Page, CDPSession } from 'playwright';
-import { summarizeFrameTiming, FrameTimingRecorder, type TraceEvent } from '../../../../src/dataset/capture/frame-timing.js';
+import { summarizeFrameTiming, FrameTimingRecorder, toWallClockUs, type TraceEvent } from '../../../../src/dataset/capture/frame-timing.js';
 import { readFileSync } from 'node:fs';
 
 const sample: TraceEvent[] = JSON.parse(readFileSync(new URL('./fixtures/trace-sample.json', import.meta.url), 'utf8'));
@@ -38,12 +38,29 @@ describe('FrameTimingRecorder', () => {
       off: vi.fn(),
       detach: vi.fn(async () => undefined),
     } as unknown as CDPSession;
-    const page = { context: () => ({ newCDPSession: async () => cdp }) } as unknown as Page;
+    const evaluate = vi.fn(async () => undefined);
+    const page = { context: () => ({ newCDPSession: async () => cdp }), evaluate } as unknown as Page;
     const r = new FrameTimingRecorder(page);
+    const before = Date.now();
     await r.start();
+    expect(evaluate).toHaveBeenCalledWith("console.timeStamp('uipe-sync')");
+    expect(r.syncWallMs).toBeGreaterThanOrEqual(before);
+    expect(r.syncWallMs).toBeLessThanOrEqual(Date.now());
     const events = await r.stopAndCollect();
     expect(events).toHaveLength(1);
     expect((cdp.send as any).mock.calls[0][1].traceConfig.includedCategories)
       .toEqual(['devtools.timeline', 'disabled-by-default-devtools.timeline.frame']);
+  });
+});
+
+describe('toWallClockUs', () => {
+  const mark = (ts: number): TraceEvent => ({ name: 'TimeStamp', cat: 'devtools.timeline', ph: 'I', ts, args: { data: { message: 'uipe-sync' } } });
+  it('shifts TimeTicks µs so the sync marker lands on its wall time', () => {
+    const out = toWallClockUs([mark(4_170_400_000_000), { name: 'DrawFrame', cat: 'c', ph: 'I', ts: 4_170_400_016_000 }], 1_700_000_000_000)!;
+    expect(out.map((e) => e.ts)).toEqual([1_700_000_000_000_000, 1_700_000_000_016_000]);
+  });
+  it('returns null without a marker or a recorded sync time', () => {
+    expect(toWallClockUs([{ name: 'DrawFrame', cat: 'c', ph: 'I', ts: 1 }], 5)).toBeNull();
+    expect(toWallClockUs([mark(1)], null)).toBeNull();
   });
 });

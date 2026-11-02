@@ -56,7 +56,7 @@ export interface FrameTimingSummary {
 export interface FlashResult { general: number; red: number; failsWcag231: boolean }
 export type ReducedMotionResult =
   | { status: 'measured'; motionRatio: number }
-  | { status: 'not-reproducible'; reason: 'unreachable-state' | 'side-effect-risk' | 'error' };
+  | { status: 'not-reproducible'; reason: 'unreachable-state' | 'side-effect-risk' | 'error' | 'budget-exhausted' };
 
 export interface Measurements {
   declared: { durationMs: number; delayMs: number; easing?: string }[];

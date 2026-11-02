@@ -5,10 +5,11 @@ import { StructuralPipeline } from '../../pipelines/structural/index.js';
 import type { TimelineEvent } from '../../pipelines/temporal/collectors/types.js';
 import type { SceneGraph, SceneNode } from '../../types/scene-graph.js';
 import type { StructuralNode } from '../../types/structural.js';
-import { FrameTimingRecorder, summarizeFrameTiming, type TraceEvent } from '../capture/frame-timing.js';
+import { FrameTimingRecorder, summarizeFrameTiming, toWallClockUs, type TraceEvent } from '../capture/frame-timing.js';
 import { PAGE_OBSERVERS_SCRIPT, readPageObservers } from '../capture/page-observers.js';
 import { ScreencastRecorder, type CapturedFrame } from '../capture/screencast-recorder.js';
 import { SiteMap } from '../sitemap/sitemap.js';
+import type { RunBudget } from '../budget.js';
 import type { ClipStore } from '../store/clip-store.js';
 import type { TraceWriter } from '../trace/trace-writer.js';
 import type { Clip, Episode, Measurements, Trigger } from '../types.js';
@@ -21,6 +22,8 @@ import { SEGMENTER_DEFAULTS, Segmenter, type SegmenterOptions } from './segmente
 export interface RecorderDeps {
   engine: Engine; trace: TraceWriter; store: ClipStore; siteMap: SiteMap;
   runId: string; site: string; segmenterOptions?: Partial<SegmenterOptions>;
+  /** Once exceeded, settles stop waiting and replays are skipped, so one step cannot overrun the wall cap. */
+  budget?: Pick<RunBudget, 'exceeded'>;
 }
 
 const TICK_MS = 50;
@@ -32,8 +35,9 @@ interface Snapshot { graph: SceneGraph; png: Buffer }
 interface AfterState extends Snapshot {
   nodes: StructuralNode[]; nodeMap: ReadonlyMap<string, StructuralNode>; title: string; frameSrcs: string[];
 }
-/** trace events re-timed to stream µs, plus the stream ms tracing has covered since */
-interface TraceWindow { events: TraceEvent[]; coveredFromMs: number }
+/** Trace events re-timed to wall-clock µs (stable across the stream clock's per-navigation re-anchoring),
+ * plus the wall ms tracing has covered since. */
+interface TraceWindow { events: TraceEvent[]; coveredFromWallMs: number }
 
 const ROLE_KINDS: [RegExp, string][] = [
   [/^(dialog|alertdialog)$/, 'modal'],
@@ -71,7 +75,7 @@ export class Recorder {
   private page?: Page;
   private screencast?: ScreencastRecorder;
   private frameTiming?: FrameTimingRecorder;
-  private traceSince = 0;
+  private traceSinceWallMs = 0;
   private documentStatus: number | null = null;
   private replaying = false;
   private step = 0;
@@ -79,7 +83,7 @@ export class Recorder {
   private pending?: { triggerId: string; before?: Snapshot; traceRef: string };
   private last?: Snapshot;
   /** Episodes closed by a main-frame navigation, with frames read before the clock re-anchored. */
-  private navClosed: { ep: Episode; frames: CapturedFrame[] }[] = [];
+  private navClosed: { ep: Episode; frames: CapturedFrame[]; wallAnchorMs: number }[] = [];
   private readonly counts = { kept: 0, rejected: 0, duplicates: 0 };
   private unsubscribe: () => void = () => undefined;
 
@@ -106,17 +110,18 @@ export class Recorder {
     await this.screencast.start();
     this.frameTiming = new FrameTimingRecorder(page);
     await this.frameTiming.start();
-    this.traceSince = this.now();
+    this.traceSinceWallMs = Date.now();
 
     const onEvent = (e: TimelineEvent) => { if (!this.replaying) this.segmenter.onEvent(e); };
     const onNav = (f: unknown) => {
       if (this.replaying || f !== page.mainFrame()) return;
       const t = this.now();
+      const wallAnchorMs = Date.now() - t; // the closing epoch's stream-to-wall offset
       this.segmenter.onNavigated(t);
       // The stream clock re-anchors to ~0 after a navigation, so old-epoch frames would alias into
       // new-page episodes: read the closed episodes' frames now, then empty the buffer.
       for (const ep of this.segmenter.tick(t)) {
-        this.navClosed.push({ ep, frames: this.screencast?.framesBetween(ep.startTs, ep.endTs) ?? [] });
+        this.navClosed.push({ ep, frames: this.screencast?.framesBetween(ep.startTs, ep.endTs) ?? [], wallAnchorMs });
       }
       this.screencast?.dropBefore(Infinity);
     };
@@ -150,7 +155,7 @@ export class Recorder {
   async awaitSettle(): Promise<Episode[]> {
     const deadline = Date.now() + this.opts.maxEpisodeMs + this.opts.settleMs + SETTLE_SLACK_MS;
     const episodes = [...this.navClosed.map((n) => n.ep), ...this.segmenter.tick(this.now())];
-    while (this.segmenter.isOpen && Date.now() < deadline) {
+    while (this.segmenter.isOpen && Date.now() < deadline && !this.deps.budget?.exceeded()) {
       await new Promise((r) => setTimeout(r, TICK_MS));
       episodes.push(...this.segmenter.tick(this.now()));
     }
@@ -196,14 +201,16 @@ export class Recorder {
   /** R3: tracing runs continuously; restart it at each settle boundary and keep the closed window. */
   private async rotateTrace(): Promise<TraceWindow | null> {
     const ft = this.frameTiming;
-    const n = this.deps.engine.eventStream.getNormalizer();
-    if (!ft || !n) return null;
+    if (!ft) return null;
     try {
       const raw = await ft.stopAndCollect();
-      const coveredFromMs = this.traceSince;
+      const sync = ft.syncWallMs;
+      const coveredFromWallMs = this.traceSinceWallMs;
       await ft.start();
-      this.traceSince = this.now();
-      return { events: raw.map((e) => ({ ...e, ts: n.fromCdpMonotonicSeconds(e.ts / 1e6) * 1000 })), coveredFromMs };
+      this.traceSinceWallMs = Date.now();
+      const events = toWallClockUs(raw, sync);
+      if (!events) this.traceError('frame timing trace has no sync marker; frameTiming is null for this window');
+      return events && { events, coveredFromWallMs };
     } catch (e) {
       this.traceError(`frame timing trace failed: ${errMessage(e)}`);
       return null;
@@ -214,9 +221,12 @@ export class Recorder {
     if (episodes.length === 0 || !this.screencast) return;
     const screencast = this.screencast;
     // Frames are read up front: a reduced-motion replay drops the recorder's buffer.
-    const stashed = new Map(this.navClosed.map((n) => [n.ep.id, n.frames]));
+    const stashed = new Map(this.navClosed.map((n) => [n.ep.id, n]));
     this.navClosed = [];
-    const frames = episodes.map((ep) => stashed.get(ep.id) ?? screencast.framesBetween(ep.startTs, ep.endTs));
+    const frames = episodes.map((ep) => stashed.get(ep.id)?.frames ?? screencast.framesBetween(ep.startTs, ep.endTs));
+    // Taken before the replay, which navigates and re-anchors the stream clock.
+    const currentAnchor = Date.now() - this.now();
+    const anchors = episodes.map((ep) => stashed.get(ep.id)?.wallAnchorMs ?? currentAnchor);
     const window = await this.rotateTrace();
     let after: AfterState;
     try {
@@ -227,7 +237,7 @@ export class Recorder {
     }
     for (const [i, ep] of episodes.entries()) {
       try {
-        await this.processEpisode(ep, frames[i], after, window);
+        await this.processEpisode(ep, frames[i], after, window, anchors[i]);
       } catch (e) {
         this.traceError(`episode ${ep.id}: ${errMessage(e)}`);
       }
@@ -237,22 +247,27 @@ export class Recorder {
     this.pending = undefined;
   }
 
-  private async measure(ep: Episode, frames: CapturedFrame[], window: TraceWindow | null): Promise<Omit<Measurements, 'reducedMotion'>> {
+  private async measure(
+    ep: Episode, frames: CapturedFrame[], window: TraceWindow | null, wallAnchorMs: number,
+  ): Promise<Omit<Measurements, 'reducedMotion'>> {
     const vp = this.activePage.viewportSize() ?? DEFAULT_VIEWPORT;
     const [measuredDurationMs, fittedEasing, flashes, observers] = await Promise.all([
       measuredDuration(frames), fitEasing(frames), detectFlashes(frames, vp), this.observersSince(ep.startTs),
     ]);
     const scores = ep.animations.map((a) => a.deviation?.score).filter((s): s is number => s !== undefined);
-    const covered = window && ep.startTs >= window.coveredFromMs;
+    const startWallMs = ep.startTs + wallAnchorMs;
+    // Covered from the trigger on; the pre-roll may predate the rotation that started this window.
+    const timing = window && startWallMs + this.opts.preRollMs >= window.coveredFromWallMs
+      ? summarizeFrameTiming(window.events, startWallMs * 1000, (ep.endTs + wallAnchorMs) * 1000)
+      : null;
     const spanMs = frames.length > 1 ? frames[frames.length - 1].ts - frames[0].ts : 0;
     return {
       declared: ep.animations.map((a) => ({ durationMs: a.duration, delayMs: a.delay, ...(a.easing ? { easing: a.easing } : {}) })),
       measuredDurationMs,
       fittedEasing,
       deviationScore: scores.length ? Math.max(...scores) : null,
-      frameTiming: covered
-        ? { ...summarizeFrameTiming(window.events, ep.startTs * 1000, ep.endTs * 1000), longAnimationFrames: observers.longAnimationFrames }
-        : null,
+      // No DrawFrame in the window means no evidence, not a jank-free clip.
+      frameTiming: timing && timing.frames > 0 ? { ...timing, longAnimationFrames: observers.longAnimationFrames } : null,
       layoutShift: observers.layoutShift,
       flashes,
       framesCaptured: frames.length,
@@ -267,7 +282,9 @@ export class Recorder {
     return readPageObservers(page, pageNow - (this.now() - streamTs));
   }
 
-  private async processEpisode(ep: Episode, frames: CapturedFrame[], after: AfterState, window: TraceWindow | null): Promise<void> {
+  private async processEpisode(
+    ep: Episode, frames: CapturedFrame[], after: AfterState, window: TraceWindow | null, wallAnchorMs: number,
+  ): Promise<void> {
     const { trace, store, runId, site, siteMap } = this.deps;
     const own = this.pending?.triggerId === ep.trigger.id ? this.pending : undefined;
     const before = own?.before ?? this.last ?? after;
@@ -278,7 +295,6 @@ export class Recorder {
     const targetIds = new Set(targets.map((t) => t.id));
     const targetScenes = after.graph.nodes.filter((s) => targetIds.has(s.id));
 
-    const measured = await this.measure(ep, frames, window);
     const keyframes = await keyframesOf(frames);
     const verdict = await classifyJunk({
       episode: ep, before: before.graph, after: after.graph, documentStatus: this.documentStatus, frames, targets, targetScenes,
@@ -292,6 +308,8 @@ export class Recorder {
       return;
     }
 
+    // Measured only once kept: decoding every frame of a 10 s rejected episode costs tens of seconds.
+    const measured = await this.measure(ep, frames, window, wallAnchorMs);
     const stateId = ep.trigger.stateId || SiteMap.stateIdFor(after.graph.url, after.graph);
     const occurrence = { url: after.graph.url, stateId, triggerId: ep.trigger.id };
     const fingerprint = episodeFingerprint(ep, targets, after.nodeMap);
@@ -305,7 +323,9 @@ export class Recorder {
       return;
     }
 
-    const reducedMotion = await this.replay(ep, frames);
+    const reducedMotion: Measurements['reducedMotion'] = this.deps.budget?.exceeded()
+      ? { status: 'not-reproducible', reason: 'budget-exhausted' }
+      : await this.replay(ep, frames);
     const id = `clip-${String(++this.clipSeq).padStart(4, '0')}`;
     const firstStart = ep.animations.length ? Math.min(...ep.animations.map((a) => a.startTs)) : null;
     const clip: Clip = {

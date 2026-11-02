@@ -18,7 +18,7 @@ vi.mock('../../../../src/mcp/server.js', () => ({
     server: {},
     engine: {
       ensureLaunched: async () => { h.launches++; },
-      runtime: { close: h.close, getPage: () => ({ route: vi.fn(async () => undefined), context: () => ({ setExtraHTTPHeaders: h.setHeaders }) }) },
+      runtime: { close: h.close, getPage: () => ({ context: () => ({ setExtraHTTPHeaders: h.setHeaders, route: vi.fn(async () => undefined), on: vi.fn() }) }) },
     },
   }),
 }));
@@ -86,40 +86,56 @@ describe('runSite', () => {
 });
 
 describe('guardNavigations', () => {
-  async function harness(fetchRobotsImpl: any) {
+  async function harness() {
     let handler: any;
-    const main = {};
-    const page: any = { route: async (_: string, h: any) => { handler = h; }, mainFrame: () => main };
+    let onPage: any;
+    const main: any = {};
+    const page: any = { mainFrame: () => main };
+    page.context = () => ({ route: async (_: string, h: any) => { handler = h; }, on: (_: string, h: any) => { onPage = h; } });
+    main.page = () => page;
     const written: any[] = [];
     const trace: any = { write: (r: any) => written.push(r) };
-    await guardNavigations(page, 'ua', trace, { origin: 'https://a.test', robots: { status: 'ok', allowed: (p: string) => !p.startsWith('/private') } }, fetchRobotsImpl);
+    await guardNavigations(page, trace, { origin: 'https://a.test', robots: { status: 'ok', allowed: (p: string) => !p.startsWith('/private') } });
     const nav = async (url: string, frame: any = main) => {
-      const route = { request: () => ({ isNavigationRequest: () => true, frame: () => frame, url: () => url }), continue: vi.fn(async () => undefined), abort: vi.fn(async () => undefined) };
+      const route = { request: () => ({ isNavigationRequest: () => true, frame: () => (frame === 'none' ? (() => { throw new Error('no frame'); })() : frame), url: () => url }), continue: vi.fn(async () => undefined), abort: vi.fn(async () => undefined), fulfill: vi.fn(async () => undefined) };
       await handler(route);
       return route;
     };
-    return { nav, written };
+    return { nav, written, page, popup: (p: any) => onPage(p) };
   }
 
   it('aborts_later_same_origin_navigation_into_disallowed_path_and_traces_it', async () => {
-    const { nav, written } = await harness(vi.fn());
+    const { nav, written } = await harness();
     const r = await nav('https://a.test/private/x');
-    expect(r.abort).toHaveBeenCalled(); expect(r.continue).not.toHaveBeenCalled();
+    expect(r.fulfill).toHaveBeenCalledWith({ status: 204 }); expect(r.continue).not.toHaveBeenCalled();
     expect(written[0]).toMatchObject({ type: 'tool-refused', tool: 'navigate' });
   });
 
-  it('checks_robots_per_cross_origin_and_caches_it', async () => {
-    const f = vi.fn(async () => ({ status: 'ok', allowed: (p: string) => p !== '/no' }));
-    const { nav } = await harness(f);
-    expect((await nav('https://b.test/no')).abort).toHaveBeenCalled();
-    expect((await nav('https://b.test/ok')).continue).toHaveBeenCalled();
-    expect(f).toHaveBeenCalledTimes(1);
+  it('allows_same_origin_navigation', async () => {
+    const { nav } = await harness();
+    expect((await nav('https://a.test/ok')).continue).toHaveBeenCalled();
+  });
+
+  it('aborts_off_origin_main_frame_navigation_and_traces_it', async () => {
+    const { nav, written } = await harness();
+    const r = await nav('https://b.test/');
+    expect(r.fulfill).toHaveBeenCalledWith({ status: 204 }); expect(r.continue).not.toHaveBeenCalled();
+    expect(written[0]).toMatchObject({ type: 'tool-refused', detail: 'off-origin navigation https://b.test' });
+  });
+
+  it('closes_popup_pages_and_aborts_their_navigations', async () => {
+    const { nav, popup, written } = await harness();
+    const other: any = { close: vi.fn(async () => undefined) };
+    const popupFrame = { page: () => other };
+    expect((await nav('https://a.test/ok', popupFrame)).abort).toHaveBeenCalled();
+    expect((await nav('https://a.test/ok', 'none')).abort).toHaveBeenCalled();
+    popup(other);
+    expect(other.close).toHaveBeenCalled();
+    expect(written.at(-1)).toMatchObject({ type: 'tool-refused', detail: 'popup page closed' });
   });
 
   it('subframe_navigations_skip_the_check', async () => {
-    const f = vi.fn();
-    const { nav } = await harness(f);
-    expect((await nav('https://b.test/no', {})).continue).toHaveBeenCalled();
-    expect(f).not.toHaveBeenCalled();
+    const { nav, page } = await harness();
+    expect((await nav('https://b.test/no', { page: () => page })).continue).toHaveBeenCalled();
   });
 });

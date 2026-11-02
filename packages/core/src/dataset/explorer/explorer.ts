@@ -1,7 +1,6 @@
 import type { Engine } from '../../mcp/engine.js';
 import { originOf } from '../../mcp/engine.js';
 import type { BrowserAction } from '../../types/browser-actions.js';
-import type { SceneGraph } from '../../types/scene-graph.js';
 import type { RunBudget } from '../budget.js';
 import type { Recorder } from '../recorder/recorder.js';
 import { isBotChallenge } from '../recorder/junk-filter.js';
@@ -10,6 +9,7 @@ import type { InProcessTools } from '../tools/in-process-tools.js';
 import type { TraceWriter } from '../trace/trace-writer.js';
 import type { Trigger, TriggerKind } from '../types.js';
 import { costUsd, type ExplorerCall, type ExplorerModel, type ExplorerTurn } from './model.js';
+import { resolveClickTarget, type ClickTarget } from './click-target.js';
 import { checkRails } from './rails.js';
 
 export type ExplorerStopReason = 'done' | 'cap-steps' | 'cap-usd' | 'cap-wall' | 'bot-challenge' | 'error';
@@ -57,7 +57,6 @@ export class Explorer {
   private readonly history: ExplorerTurn['history'] = [];
   private triggerSeq = 0;
   private currentState = '';
-  private graph?: SceneGraph;
   private observation = '';
 
   constructor(private readonly deps: ExplorerDeps) {
@@ -107,7 +106,6 @@ export class Explorer {
     const page = engine.runtime.getPage();
     if (isBotChallenge(graph, await page.title().catch(() => ''), page.frames().map((f) => f.url()))) return true;
     const state = this.deps.siteMap.observe(graph.url, graph, 0);
-    this.graph = graph;
     this.currentState = state.id;
     this.visited.add(state.id);
     await this.scrollSweep();
@@ -116,9 +114,12 @@ export class Explorer {
   }
 
   private async execute(call: ExplorerCall, step: number): Promise<{ summary: string; finished: boolean }> {
-    const verdict = checkRails(call, { startOrigin: this.startOrigin, targetLabel: this.labelAt(call) });
+    const target = await this.resolveTarget(call);
+    const verdict = checkRails(call, { startOrigin: this.startOrigin, targetLabel: target?.label, targetSubmit: target?.submit });
     if (!verdict.ok) {
-      this.deps.trace.write({ type: 'tool-refused', step, tool: String(call.tool), detail: verdict.reason });
+      const detail = verdict.detail ? `${verdict.reason}: ${verdict.detail}` : verdict.reason;
+      this.deps.trace.write({ type: 'tool-refused', step, tool: String(call.tool), detail });
+      // Only the rule name reaches the model; detail can be page text.
       return { summary: `refused: ${verdict.reason}`, finished: false };
     }
     if (call.tool === 'done') return { summary: 'done', finished: true };
@@ -142,7 +143,6 @@ export class Explorer {
     const graph = await engine.captureGraph(false);
     const state = siteMap.observe(graph.url, graph, step);
     siteMap.addTransition({ from: this.currentState, to: state.id, action, triggerId: trigger.id, clipIds: [] });
-    this.graph = graph;
     this.currentState = state.id;
     const isNew = !this.visited.has(state.id);
     if (isNew) {
@@ -177,15 +177,10 @@ export class Explorer {
     return clipObservation(`Affordances:\n${affordances.text}\n\nScene:\n${scene.text}`);
   }
 
-  /** Smallest scene node under a coordinate click, so rails judge the real target, not the model's claim. */
-  private labelAt(call: ExplorerCall): string | undefined {
-    const { x, y, type } = call.args;
-    if (call.tool !== 'act' || type !== 'click' || typeof x !== 'number' || typeof y !== 'number' || !this.graph) return undefined;
-    const hits = this.graph.nodes.filter(({ boundingBox: b }) => x >= b.x && x <= b.x + b.width && y >= b.y && y <= b.y + b.height);
-    const area = (n: SceneGraph['nodes'][number]) => n.boundingBox.width * n.boundingBox.height;
-    const hit = hits.sort((a, b) => area(a) - area(b))[0];
-    // Fused `label` is a role/detection class ('button'); visible text lives in `text` / `imageAlt`.
-    return hit ? [hit.text, hit.imageAlt, hit.label].filter(Boolean).join(' ') || undefined : undefined;
+  /** The page element a click would really hit, so rails judge it rather than the model's claim. */
+  private async resolveTarget(call: ExplorerCall): Promise<ClickTarget | null | undefined> {
+    if (call.tool !== 'act' || (call.args.type !== 'click' && call.args.type !== 'clickSelector')) return undefined;
+    return resolveClickTarget(this.deps.engine.runtime.getPage(), call.args);
   }
 
   private trigger(kind: TriggerKind, stateId: string): Trigger {

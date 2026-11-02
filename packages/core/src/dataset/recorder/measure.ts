@@ -17,12 +17,20 @@ const MAX_FLASHES_PER_SECOND = 3;
 
 interface Raw { data: Buffer; pixels: number }
 
-async function decode(frames: CapturedFrame[]): Promise<Raw[]> {
-  return Promise.all(frames.map(async (f) => {
-    const { data, info } = await sharp(f.jpeg).resize({ width: DIFF_WIDTH, withoutEnlargement: true })
-      .removeAlpha().raw().toBuffer({ resolveWithObject: true });
-    return { data, pixels: info.width * info.height };
-  }));
+// One clip's frames are measured by several functions; decode them once per array.
+const decoded = new WeakMap<CapturedFrame[], Promise<Raw[]>>();
+
+function decode(frames: CapturedFrame[]): Promise<Raw[]> {
+  let raws = decoded.get(frames);
+  if (!raws) {
+    raws = Promise.all(frames.map(async (f) => {
+      const { data, info } = await sharp(f.jpeg).resize({ width: DIFF_WIDTH, withoutEnlargement: true })
+        .removeAlpha().raw().toBuffer({ resolveWithObject: true });
+      return { data, pixels: info.width * info.height };
+    }));
+    decoded.set(frames, raws);
+  }
+  return raws;
 }
 
 function changedFraction(a: Raw, b: Raw): number {
@@ -100,9 +108,11 @@ export async function fitEasing(frames: CapturedFrame[]): Promise<EasingFit | nu
   return best;
 }
 
+// sRGB channel linearisation per byte value: a table, since a per-pixel pow made a 10 s clip cost ~25 s.
+const LINEAR = Array.from({ length: 256 }, (_, c) => { const v = c / 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; });
+
 function luminance(r: number, g: number, b: number): number {
-  const lin = (c: number) => { const v = c / 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; };
-  return 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b);
+  return 0.2126 * LINEAR[r] + 0.7152 * LINEAR[g] + 0.0722 * LINEAR[b];
 }
 
 /** +1 / -1 for the net direction of a frame pair's change, 0 if its area is below the threshold. */

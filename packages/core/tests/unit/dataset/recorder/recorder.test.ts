@@ -11,7 +11,9 @@ import type { SceneGraph, SceneNode } from '../../../../src/types/scene-graph.js
 import type { Episode, Trigger } from '../../../../src/dataset/types.js';
 
 // liveBuffer: the mock screencast filters by ts and honors dropBefore, like the real buffer.
-const fake = vi.hoisted(() => ({ frames: [] as CapturedFrame[], nodes: [] as unknown[], liveBuffer: false }));
+const fake = vi.hoisted(() => ({ frames: [] as CapturedFrame[], nodes: [] as unknown[], liveBuffer: false, traceMarker: true }));
+// Chromium trace ts are µs on the TimeTicks base (~4.17e12 in a real probe), unrelated to any page clock.
+const TICKS_BASE_US = 4_170_400_766_123;
 
 vi.mock('../../../../src/dataset/capture/screencast-recorder.js', () => ({
   ScreencastRecorder: class {
@@ -23,7 +25,17 @@ vi.mock('../../../../src/dataset/capture/screencast-recorder.js', () => ({
 }));
 vi.mock('../../../../src/dataset/capture/frame-timing.js', async (orig) => ({
   ...(await orig<object>()),
-  FrameTimingRecorder: class { async start() {} async stopAndCollect() { return []; } },
+  /** A DrawFrame every 16 ms from start() to stopAndCollect(), anchored by a sync TimeStamp at start(). */
+  FrameTimingRecorder: class {
+    syncWallMs: number | null = null;
+    async start() { this.syncWallMs = Date.now(); }
+    async stopAndCollect() {
+      const spanUs = (Date.now() - this.syncWallMs!) * 1000;
+      const draws = Array.from({ length: Math.floor(spanUs / 16_000) + 1 }, (_, i) => ({ name: 'DrawFrame', cat: 'c', ph: 'I', ts: TICKS_BASE_US + i * 16_000 }));
+      const mark = { name: 'TimeStamp', cat: 'devtools.timeline', ph: 'I', ts: TICKS_BASE_US, args: { data: { message: 'uipe-sync' } } };
+      return fake.traceMarker ? [mark, ...draws] : draws;
+    }
+  },
 }));
 vi.mock('../../../../src/dataset/capture/page-observers.js', () => ({
   PAGE_OBSERVERS_SCRIPT: '',
@@ -91,17 +103,17 @@ function fakeEngine(title: { value: string }) {
 }
 
 let dir: string;
-beforeEach(async () => { dir = await mkdtemp(join(tmpdir(), 'uipe-rec-')); fake.frames = await movingFrames(); fake.liveBuffer = false; });
+beforeEach(async () => { dir = await mkdtemp(join(tmpdir(), 'uipe-rec-')); fake.frames = await movingFrames(); fake.liveBuffer = false; fake.traceMarker = true; });
 afterEach(async () => { await rm(dir, { recursive: true, force: true }); });
 
-async function setup(pageTitle = 'Home') {
+async function setup(pageTitle = 'Home', budget?: { exceeded: () => null | 'wall' }) {
   const title = { value: pageTitle };
   const { engine, stream } = fakeEngine(title);
   const store = new LocalClipStore(dir);
   const tracePath = join(dir, 'trace.jsonl');
   const trace = new TraceWriter(tracePath, 'r1', 'x.test');
   const siteMap = new SiteMap('x.test', 'https://x.test/');
-  const rec = new Recorder({ engine, trace, store, siteMap, runId: 'r1', site: 'x.test', segmenterOptions: { settleMs: 30 } });
+  const rec = new Recorder({ engine, trace, store, siteMap, runId: 'r1', site: 'x.test', segmenterOptions: { settleMs: 30 }, ...(budget ? { budget } : {}) });
   await rec.start();
   /** one click trigger whose animation runs on the node marked with `marker` */
   const fire = async (id: string, marker: string) => {
@@ -177,6 +189,56 @@ describe('Recorder', () => {
     await fire('t2', 'b2');
     expect(await store.listClips('r1')).toHaveLength(1);
     expect(await rec.stop()).toEqual({ kept: 1, rejected: 0, duplicates: 0 });
+  });
+});
+
+describe('Recorder frame timing', () => {
+  it('maps TimeTicks-based trace µs onto the episode window via the sync marker', async () => {
+    fake.nodes = [snode('dom-1', 'a1')];
+    const { rec, store, stream } = await setup();
+    await rec.beginTrigger({ id: 't1', kind: 'action', timestamp: 0, stateId: 's1', action: { type: 'click', x: 1, y: 1 } });
+    const triggerTs = rec.now();
+    stream.emit('event', { type: 'animation-start', timestamp: rec.now(), payload: { animationId: 'a1', name: 'pop', duration: 200, iterations: 1, targetMarker: 'a1' } });
+    await new Promise((r) => setTimeout(r, 200));
+    stream.emit('event', { type: 'animation-end', timestamp: rec.now(), payload: { animationId: 'a1' } });
+    const [ep] = await rec.awaitSettle();
+    const ft = (await store.listClips('r1'))[0].measurements.frameTiming!;
+    expect(ft).not.toBeNull();
+    expect(ft.source).toBe('trace');
+    // a DrawFrame every 16 ms while tracing ran: at least the trigger-to-end span, at most the whole window
+    expect(ft.frames).toBeGreaterThanOrEqual(Math.floor((ep.endTs - triggerTs) / 16) - 1);
+    expect(ft.frames).toBeLessThanOrEqual(Math.ceil((ep.endTs - ep.startTs) / 16) + 1);
+    expect(ft.longestFrameMs).toBeCloseTo(16, 0);
+    await rec.stop();
+  });
+
+  it('frameTiming is null, with a traced error, when the trace has no sync marker', async () => {
+    fake.traceMarker = false;
+    fake.nodes = [snode('dom-1', 'a1')];
+    const { rec, store, fire, records } = await setup();
+    await fire('t1', 'a1');
+    const [clip] = await store.listClips('r1');
+    expect(clip.measurements.frameTiming).toBeNull();
+    expect((await records()).some((r) => r.type === 'error' && /sync marker/.test(r.message))).toBe(true);
+    await rec.stop();
+  });
+});
+
+describe('Recorder budget', () => {
+  it('stops waiting for settle and skips the replay once the budget is exceeded', async () => {
+    fake.nodes = [snode('dom-1', 'a1')];
+    let exceeded = false;
+    const { rec, store, stream } = await setup('Home', { exceeded: () => (exceeded ? 'wall' : null) });
+    await rec.beginTrigger({ id: 't1', kind: 'action', timestamp: 0, stateId: 's1', action: { type: 'click', x: 1, y: 1 } });
+    stream.emit('event', { type: 'animation-start', timestamp: rec.now(), payload: { animationId: 'a1', name: 'pop', duration: 50, iterations: 1, targetMarker: 'a1' } });
+    exceeded = true;
+    const startedAt = Date.now();
+    expect(await rec.awaitSettle()).toEqual([]); // the episode is still open; it is not waited for
+    expect(Date.now() - startedAt).toBeLessThan(500);
+    stream.emit('event', { type: 'animation-end', timestamp: rec.now(), payload: { animationId: 'a1' } });
+    await rec.stop();
+    const [clip] = await store.listClips('r1');
+    expect(clip.measurements.reducedMotion).toEqual({ status: 'not-reproducible', reason: 'budget-exhausted' });
   });
 });
 

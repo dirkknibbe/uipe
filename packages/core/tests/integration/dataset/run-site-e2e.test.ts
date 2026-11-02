@@ -81,6 +81,9 @@ describe('dataset run against the animated fixture site', () => {
     const kinds = new Set(site.clips.map((c) => c.kind));
     for (const kind of ['page-load', 'modal', 'scroll', 'loop']) expect(kinds, `kept kinds ${[...kinds]}`).toContain(kind);
     expect(site.clips.some((c) => c.kind === 'modal' && c.episode.animations.length >= 5)).toBe(true);
+    // Frame timing is the jank authority: the trace clock must line up with real episodes.
+    const modal = site.clips.find((c) => c.kind === 'modal')!;
+    expect(modal.measurements.frameTiming?.frames ?? 0).toBeGreaterThan(0);
 
     const reasons = new Set(site.trace.flatMap((r) => (r.type === 'clip-rejected' ? [r.reason] : [])));
     for (const reason of ['cookie-consent', 'spinner', 'offscreen', 'media-playback'] as const) {
@@ -126,8 +129,9 @@ describe('dataset run edge pages', () => {
 
   it('e2e_endless_page_closes_episodes_and_finishes_within_wall_cap', async () => {
     const maxWallMs = 20_000;
-    // One step past the cap: a max-duration episode (10 s) plus settle slack and capture.
-    const overrunMs = 20_000;
+    // The budget cuts settles and skips replays. What remains: browser launch/teardown (outside the budget,
+    // ~3 s) and measuring the still-open episode at flush (~5 s measured). Unfixed, this run took ~40 s.
+    const overrunMs = 15_000;
     const model: ExplorerModel = { next: async () => ({ call: call('act', { type: 'wait', ms: 200 }), inputTokens: 0, outputTokens: 0 }) };
     const { report, trace, wallMs } = await run('loop.html', model, { maxWallMs });
     // The report names a cap stop by the cap itself.

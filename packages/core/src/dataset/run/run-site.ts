@@ -1,8 +1,7 @@
 import { mkdir } from 'node:fs/promises';
-import type { Page } from 'playwright';
+import type { Frame, Page, Route } from 'playwright';
 import { join } from 'node:path';
 import { createServerWithEngine } from '../../mcp/server.js';
-import { originOf } from '../../mcp/engine.js';
 import { DEFAULT_CAPS, RunBudget, type BudgetCaps } from '../budget.js';
 import { fetchRobots, type Robots } from '../crawl/robots.js';
 import { AnthropicExplorerModel, type ExplorerModel } from '../explorer/model.js';
@@ -29,35 +28,45 @@ const errMessage = (e: unknown) => (e instanceof Error ? e.message : String(e));
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
 /**
- * Main-frame document navigations only (subresources pass straight through): refuse any URL robots.txt
- * disallows for its own origin (cached per origin, start origin seeded), then allow at most one per
- * origin per NAV_INTERVAL_MS.
+ * Spec 5.1 keeps the run on the start origin. Routed on the context so popups are covered too:
+ * popup pages are closed and their navigations aborted; main-frame navigations leave only for the
+ * start origin's robots-allowed paths, at most one per NAV_INTERVAL_MS. Subframes and subresources pass.
+ * ponytail: server redirects are not re-routed by Playwright, so a same-origin URL that 30x's
+ * off-origin still lands; add a framenavigated origin check if that shows up in traces.
  */
-export async function guardNavigations(
-  page: Page, userAgent: string, trace: TraceWriter, seed: { origin: string; robots: Robots },
-  fetchRobotsImpl: typeof fetchRobots = fetchRobots,
-): Promise<void> {
-  const nextSlot = new Map<string, number>();
-  const robotsByOrigin = new Map<string, Promise<Robots>>([[seed.origin, Promise.resolve(seed.robots)]]);
-  const robotsFor = (origin: string) => {
-    let r = robotsByOrigin.get(origin);
-    if (!r) robotsByOrigin.set(origin, (r = fetchRobotsImpl(origin, userAgent)));
-    return r;
-  };
-  await page.route('**/*', async (route) => {
+export async function guardNavigations(page: Page, trace: TraceWriter, seed: { origin: string; robots: Robots }): Promise<void> {
+  const context = page.context();
+  const refuse = (detail: string) => trace.write({ type: 'tool-refused', step: 0, tool: 'navigate', detail });
+  // A 204 answer keeps the current document; abort() would commit a chrome-error page instead.
+  const stay = (route: Route) => route.fulfill({ status: 204 }).catch(() => undefined);
+  let nextSlot = 0;
+  context.on('page', (popup) => {
+    if (popup === page) return;
+    refuse('popup page closed');
+    void popup.close().catch(() => undefined);
+  });
+  await context.route('**/*', async (route) => {
     const req = route.request();
-    if (!req.isNavigationRequest() || req.frame() !== page.mainFrame()) return route.continue();
-    const url = new URL(req.url());
-    if (url.protocol === 'http:' || url.protocol === 'https:') {
-      const robots = await robotsFor(url.origin);
-      if (!robots.allowed(url.pathname + url.search)) {
-        trace.write({ type: 'tool-refused', step: 0, tool: 'navigate', detail: `robots.txt disallows ${req.url()}` });
-        return route.abort('blockedbyclient').catch(() => undefined);
-      }
+    if (!req.isNavigationRequest()) return route.continue();
+    let frame: Frame;
+    try {
+      frame = req.frame();
+    } catch {
+      return route.abort('blockedbyclient').catch(() => undefined); // a popup's first request precedes its frame
     }
-    const origin = originOf(req.url());
-    const at = Math.max(Date.now(), nextSlot.get(origin) ?? 0);
-    nextSlot.set(origin, at + NAV_INTERVAL_MS);
+    if (frame.page() !== page) return route.abort('blockedbyclient').catch(() => undefined);
+    if (frame !== page.mainFrame()) return route.continue();
+    const url = new URL(req.url());
+    if (url.origin !== seed.origin) {
+      refuse(`off-origin navigation ${url.origin}`);
+      return stay(route);
+    }
+    if (!seed.robots.allowed(url.pathname + url.search)) {
+      refuse(`robots.txt disallows ${req.url()}`);
+      return stay(route);
+    }
+    const at = Math.max(Date.now(), nextSlot);
+    nextSlot = at + NAV_INTERVAL_MS;
     if (at > Date.now()) await sleep(at - Date.now());
     return route.continue().catch(() => undefined);
   });
@@ -102,11 +111,11 @@ export async function runSite(opts: RunSiteOptions): Promise<{ runId: string; re
     await engine.ensureLaunched();
     const page = engine.runtime.getPage();
     await page.context().setExtraHTTPHeaders({ 'User-Agent': userAgent });
-    await guardNavigations(page, userAgent, trace, { origin: start.origin, robots });
+    await guardNavigations(page, trace, { origin: start.origin, robots });
 
     const siteMap = new SiteMap(start.hostname, opts.startUrl);
     const budget = new RunBudget({ ...DEFAULT_CAPS, ...opts.caps });
-    const recorder = new Recorder({ engine, trace, store, siteMap, runId, site: start.hostname });
+    const recorder = new Recorder({ engine, trace, store, siteMap, runId, site: start.hostname, budget });
     await recorder.start();
     try {
       const model = stoppable(opts.model ?? new AnthropicExplorerModel(), opts.signal);
