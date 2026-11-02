@@ -4,6 +4,7 @@ import { request } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { startBrowseServer } from '../../../../src/dataset/browse/server.js';
+import { LocalClipStore } from '../../../../src/dataset/store/clip-store.js';
 import type { Clip } from '../../../../src/dataset/types.js';
 
 const clip = (id: string, kind = 'button'): Clip => ({
@@ -29,7 +30,7 @@ async function setup(nClips = 50) {
   await mkdir(join(run, 'rejected'), { recursive: true });
   await writeFile(join(run, 'rejected', 'ep-9.json'), JSON.stringify({ episodeId: 'ep-9', reason: 'blank' }));
   await writeFile(join(run, 'rejected', 'ep-9.png'), 'png');
-  await writeFile(join(run, 'report.json'), JSON.stringify({ runId: 'r1', site: 'x.test', kept: nClips, junkRateEstimate: null }));
+  await writeFile(join(run, 'report.json'), JSON.stringify({ runId: 'r1', site: 'x.test', stopReason: 'completed', kept: nClips, rejected: 0, duplicates: 0, rejectedByReason: {}, uniqueEpisodes: nClips, states: 1, transitions: 1, capsHit: [], usd: 0, usdPerKeptClip: null, duplicateRate: 0, junkRateEstimate: null, passes: { minUniqueEpisodes: true, maxDuplicateRate: true } }));
   await writeFile(join(run, 'secret.txt'), 'inside');
   await writeFile(join(root, 'outside.txt'), 'outside');
   const srv = await startBrowseServer({ root, port: 0 });
@@ -78,6 +79,20 @@ describe('browse server', () => {
     expect(await raw('/files/..%2f/x')).toBe(403);
   });
 
+  it('serves_real_saved_clip_assets_at_clip_relative_urls', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'uipe-browse-'));
+    const srv = await startBrowseServer({ root, port: 0 });
+    cleanups.push(() => srv.close(), () => rm(root, { recursive: true, force: true }));
+    const buf = Buffer.from('jpg');
+    const scene = {} as never;
+    const saved = await new LocalClipStore(root).saveClip(clip('c1'), { frames: [buf], keyframes: [], beforePng: buf, afterPng: buf, beforeScene: scene, afterScene: scene });
+    for (const rel of [saved.files.frames[0], saved.files.beforePng, saved.files.afterPng]) {
+      expect((await get(`${srv.url}/files/r1/clips/c1/${rel}`)).status).toBe(200);
+    }
+    const html = (await get(`${srv.url}/`)).body;
+    expect(html).toContain('clips/${clip.id}/${rel}');
+  });
+
   it('handcheck_40_updates_report_junk_rate', async () => {
     const { srv, run } = await setup(50);
     const post = (clipId: string, junk: boolean) => fetch(`${srv.url}/api/runs/r1/handcheck`, { method: 'POST', body: JSON.stringify({ clipId, junk }) });
@@ -86,6 +101,7 @@ describe('browse server', () => {
     await post('clip-0039', false);
     expect(JSON.parse(await readFile(join(run, 'report.json'), 'utf8')).junkRateEstimate).toBeCloseTo(4 / 40);
     expect((await readFile(join(run, 'handcheck.jsonl'), 'utf8')).trim().split('\n')).toHaveLength(40);
+    expect(await readFile(join(run, 'report.md'), 'utf8')).toContain('junk: 10.0% (hand-check');
     expect((await post('../x', true)).status).toBe(400);
   });
 });

@@ -3,6 +3,7 @@ import { appendFile, readFile, readdir, stat, writeFile } from 'node:fs/promises
 import { dirname, join, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { datasetRoot, LocalClipStore } from '../store/clip-store.js';
+import { renderReportMarkdown, type RunReport } from '../run/report.js';
 import { readTrace } from '../trace/trace-writer.js';
 import type { Clip } from '../types.js';
 
@@ -84,7 +85,9 @@ export async function startBrowseServer(opts: { root?: string; port?: number }):
     const report = await readJson<Record<string, unknown>>(join(dir, 'report.json'));
     if (verdicts.size >= HANDCHECK_SIZE && report) {
       const junkRateEstimate = [...verdicts.values()].filter(Boolean).length / verdicts.size;
-      await writeFile(join(dir, 'report.json'), JSON.stringify({ ...report, junkRateEstimate }, null, 2));
+      const updated = { ...report, junkRateEstimate };
+      await writeFile(join(dir, 'report.json'), JSON.stringify(updated, null, 2));
+      await writeFile(join(dir, 'report.md'), renderReportMarkdown(updated as unknown as RunReport));
     }
     return { recorded: verdicts.size };
   }

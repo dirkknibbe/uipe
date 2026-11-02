@@ -64,7 +64,7 @@ export function renderReportMarkdown(r: RunReport): string {
   const pass = r.passes.minUniqueEpisodes && r.passes.maxDuplicateRate;
   const reasons = Object.entries(r.rejectedByReason).filter(([, n]) => n > 0).map(([k, n]) => `- ${k}: ${n}`);
   return [
-    `kept ${r.kept} · rejected ${r.rejected} · duplicate rate ${(r.duplicateRate * 100).toFixed(1)}% · unique ${r.uniqueEpisodes} · ${pass ? 'PASS' : 'FAIL'} (dup ≤10%, unique ≥15) · junk: pending hand-check (40)`,
+    `kept ${r.kept} · rejected ${r.rejected} · duplicate rate ${(r.duplicateRate * 100).toFixed(1)}% · unique ${r.uniqueEpisodes} · ${pass ? 'PASS' : 'FAIL'} (dup ≤10%, unique ≥15) · junk: ${r.junkRateEstimate === null ? 'pending hand-check (40)' : `${(r.junkRateEstimate * 100).toFixed(1)}% (hand-check, ≤20%)`}`,
     '',
     `Run ${r.runId} on ${r.site}, stop reason: ${r.stopReason}`,
     `States ${r.states}, transitions ${r.transitions}, duplicates ${r.duplicates}`,
