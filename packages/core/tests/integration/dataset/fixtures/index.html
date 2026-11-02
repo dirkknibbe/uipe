@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Fixture Studio</title>
+  <link rel="stylesheet" href="/site.css">
+</head>
+<body>
+  <nav class="site-nav">
+    <a class="nav-link" href="/index.html">Home<span class="nav-underline"></span></a><a class="nav-link" href="/about.html">About<span class="nav-underline"></span></a><a class="nav-link" href="/gallery.html">Gallery<span class="nav-underline"></span></a><a class="nav-link" href="/pricing.html">Pricing<span class="nav-underline"></span></a>
+  </nav>
+  <main>
+    <section class="hero">
+      <h1 class="hero-item">Motion that means something</h1>
+      <p class="hero-item">A small studio site used to exercise the animation-taste recorder.</p>
+      <div class="hero-item">Scroll down for the scroll-driven section.</div>
+      <button id="open-modal" class="modal-trigger" type="button">Open details</button>
+    </section>
+    <div class="spacer"></div>
+    <section class="scroll-section">
+      <div class="parallax"></div>
+      <div class="reveal"></div>
+      <div class="reveal"></div>
+      <div class="reveal"></div>
+    </section>
+    <div id="modal" class="modal">
+      <div class="modal-backdrop"></div>
+      <div class="modal-panel" role="dialog" aria-modal="true" aria-label="Details">
+        <h2 class="modal-item">Details</h2>
+        <p class="modal-item">Everything about the studio, in one panel.</p>
+        <p class="modal-item">Press Escape to close.</p>
+      </div>
+    </div>
+  </main>
+  <script src="/site.js"></script>
+</body>
+</html>

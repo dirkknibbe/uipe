@@ -44,6 +44,39 @@ To run the optical-flow evaluation against synthetic fixtures:
 pnpm run bench:flow
 ```
 
+## Animation-taste dataset
+
+An AI explorer drives a site through the in-process MCP tools while a recorder segments every
+trigger into an animation episode, measures it, junk-filters it and dedups it. Kept clips, rejects
+(with reasons), `trace.jsonl`, `sitemap.json` and `report.{json,md}` land under the dataset root.
+
+```bash
+# Explore and record one or more sites (default caps: 60 steps, $2.00, 20 min per site)
+pnpm -F @uipe/core dataset:run --site https://example.org --site https://example.net \
+  --contact https://your.site/crawler-contact [--max-usd 1.50]
+
+# Browse kept/rejected clips and hand-check a seeded 40-clip sample (J = junk, K = keep)
+pnpm -F @uipe/core dataset:browse          # http://127.0.0.1:4173 (PORT overrides)
+```
+
+- **`--contact` is required.** The crawler refuses to run without it and identifies itself as
+  `UIPE-research-crawler/0.1 (+<contact>)`. It honors robots.txt (a 5xx on robots.txt means
+  disallow), rate-limits to one navigation per 2 s per origin, stays logged out, never submits
+  forms, and stops on a bot challenge rather than evading it.
+- Ctrl-C stops after the current step and still writes a partial report; a second Ctrl-C forces exit.
+
+| Env var | Default | Purpose |
+|---|---|---|
+| `UIPE_DATASET_DIR` | `~/.uipe/dataset` | Dataset root (`runs/<runId>/...`). Never commit it. |
+| `ANTHROPIC_API_KEY` | (none) | Key for the explorer model (`CLAUDE_API_KEY` also accepted). |
+| `UIPE_EXPLORER_MODEL` | `claude-sonnet-5` | Explorer model id. |
+| `UIPE_EXPLORER_PRICE_IN` / `UIPE_EXPLORER_PRICE_OUT` | `3` / `15` | USD per million input/output tokens, for the `$` budget cap. |
+
+Milestone-1 pass bar per site: duplicate rate ≤ 10% and ≥ 15 unique episodes (both in the
+report), junk among kept ≤ 20% on the 40-clip hand-check. The end-to-end test
+(`tests/integration/dataset/run-site-e2e.test.ts`) runs the whole pipeline against an animated
+fixture site with a scripted explorer.
+
 ## Services
 
 UIPE depends on two external services that must be running for full integration tests:
