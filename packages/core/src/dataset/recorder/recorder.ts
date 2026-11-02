@@ -1,6 +1,6 @@
 import sharp from 'sharp';
 import type { Page, Response } from 'playwright';
-import type { Engine } from '../../mcp/engine.js';
+import { originOf, type Engine } from '../../mcp/engine.js';
 import { StructuralPipeline } from '../../pipelines/structural/index.js';
 import type { TimelineEvent } from '../../pipelines/temporal/collectors/types.js';
 import type { SceneGraph, SceneNode } from '../../types/scene-graph.js';
@@ -24,6 +24,8 @@ export interface RecorderDeps {
   runId: string; site: string; segmenterOptions?: Partial<SegmenterOptions>;
   /** Once exceeded, settles stop waiting and replays are skipped, so one step cannot overrun the wall cap. */
   budget?: Pick<RunBudget, 'exceeded'>;
+  /** The allowed origin (spec 5.1); nothing seen on another origin becomes a clip. Throwing counts as off-origin. */
+  origin?: () => string;
 }
 
 const TICK_MS = 50;
@@ -87,6 +89,15 @@ export class Recorder {
   private readonly counts = { kept: 0, rejected: 0, duplicates: 0 };
   private unsubscribe: () => void = () => undefined;
 
+  private offOrigin(url: string): boolean {
+    if (!this.deps.origin) return false;
+    try {
+      return originOf(url) !== this.deps.origin();
+    } catch {
+      return true;
+    }
+  }
+
   constructor(private readonly deps: RecorderDeps) {
     this.opts = { ...SEGMENTER_DEFAULTS, ...deps.segmenterOptions };
     this.segmenter = new Segmenter(this.opts);
@@ -113,14 +124,19 @@ export class Recorder {
     this.traceSinceWallMs = Date.now();
 
     const onEvent = (e: TimelineEvent) => { if (!this.replaying) this.segmenter.onEvent(e); };
+    let epochUrl = page.url();
     const onNav = (f: unknown) => {
       if (this.replaying || f !== page.mainFrame()) return;
+      // Episodes that ran on an off-origin http page (a redirect the guard bounced) are dropped with their frames.
+      const leftOffOrigin = /^https?:/.test(epochUrl) && this.offOrigin(epochUrl);
+      epochUrl = page.url();
       const t = this.now();
       const wallAnchorMs = Date.now() - t; // the closing epoch's stream-to-wall offset
       this.segmenter.onNavigated(t);
       // The stream clock re-anchors to ~0 after a navigation, so old-epoch frames would alias into
       // new-page episodes: read the closed episodes' frames now, then empty the buffer.
       for (const ep of this.segmenter.tick(t)) {
+        if (leftOffOrigin) continue;
         this.navClosed.push({ ep, frames: this.screencast?.framesBetween(ep.startTs, ep.endTs) ?? [], wallAnchorMs });
       }
       this.screencast?.dropBefore(Infinity);
@@ -233,6 +249,12 @@ export class Recorder {
       after = await this.captureAfter();
     } catch (e) {
       this.traceError(`after-state capture failed: ${errMessage(e)}`);
+      return;
+    }
+    if (this.offOrigin(after.graph.url)) {
+      this.traceError(`off-origin page ${originOf(after.graph.url)}: ${episodes.length} episodes dropped`);
+      screencast.dropBefore(Number.POSITIVE_INFINITY);
+      this.pending = undefined;
       return;
     }
     for (const [i, ep] of episodes.entries()) {

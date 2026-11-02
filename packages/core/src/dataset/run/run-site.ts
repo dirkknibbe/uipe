@@ -24,6 +24,7 @@ export class ContactUrlRequired extends Error {
 }
 
 const NAV_INTERVAL_MS = 2_000;
+const MAX_OFF_ORIGIN_REDIRECTS = 3;
 const errMessage = (e: unknown) => (e instanceof Error ? e.message : String(e));
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
@@ -44,8 +45,12 @@ export class StartRedirectedOffSite extends Error {
   constructor(landed: string) { super(`start URL redirected off-site to ${landed}; run aborted`); }
 }
 
+export class OffOriginRedirectCap extends Error {
+  constructor() { super(`off-origin redirect cap reached (${MAX_OFF_ORIGIN_REDIRECTS}); run stopped`); }
+}
+
 export interface NavigationGuard {
-  /** The allowed origin, canonicalised on the first load; throws StartRedirectedOffSite if that load left the site. */
+  /** The allowed origin, canonicalised on the first load; throws once the guard has stopped the run. */
   origin(): string;
 }
 
@@ -53,10 +58,13 @@ export interface NavigationGuard {
  * Spec 5.1 keeps the run on the start origin. Routed on the context so popups are covered too:
  * popup pages are closed and their navigations aborted; main-frame navigations leave only for the
  * allowed origin's robots-allowed paths, at most one per NAV_INTERVAL_MS. Subframes and subresources pass.
- * Playwright does not re-route server redirects, so a main-frame commit off-origin (a same-origin URL
- * that 30x's away) is refused after the fact and the page sent back to the last on-origin URL.
- * ponytail: the redirect target's GET has already been sent by then, and the explorer can observe the
- * off-origin page for the moment before the bounce; route.fetch({maxRedirects:0}) if that matters.
+ * Playwright does not route redirect hops (checked in real Chromium: a 3xx fulfilled from route.fetch is
+ * followed without re-entering the route), so a main-frame commit off-origin (a same-origin URL that 30x's
+ * away) is refused after the fact: the page goes back to the last on-origin URL, outside the rate slot.
+ * After MAX_OFF_ORIGIN_REDIRECTS such commits the run stops: about:blank, every navigation refused, origin() throws.
+ * ponytail: each bounced redirect still sends its target one request; the Explorer and Recorder skip the
+ * off-origin page. Pre-commit refusal needs every document fetched outside the browser (route.fetch), which
+ * changes the crawler's network fingerprint.
  */
 export async function guardNavigations(page: Page, trace: TraceWriter, seed: { origin: string; robots: Robots }): Promise<NavigationGuard> {
   const context = page.context();
@@ -65,23 +73,29 @@ export async function guardNavigations(page: Page, trace: TraceWriter, seed: { o
   const stay = (route: Route) => route.fulfill({ status: 204 }).catch(() => undefined);
   let origin = seed.origin;
   let lastOnOrigin: string | undefined;
-  let offSite: string | undefined;
+  let stopped: Error | undefined;
+  let offOriginCommits = 0;
+  let bounceTo: string | undefined; // the bounce's own request skips the rate slot
   let nextSlot = 0;
+  const halt = (e: Error) => {
+    stopped = e;
+    void page.goto('about:blank').catch(() => undefined);
+  };
   context.on('page', (popup) => {
     if (popup === page) return;
     refuse('popup page closed');
     void popup.close().catch(() => undefined);
   });
   page.on('framenavigated', (frame) => {
-    if (frame !== page.mainFrame() || offSite) return;
+    if (frame !== page.mainFrame() || stopped) return;
     const url = frame.url();
     if (!/^https?:/.test(url)) return;
     if (!lastOnOrigin) {
       const canonical = canonicalStartOrigin(origin, url);
       if (!canonical) {
-        offSite = new URL(url).origin;
+        const offSite = new URL(url).origin;
         refuse(`start URL redirected off-site to ${offSite}`);
-        void page.goto('about:blank').catch(() => undefined);
+        halt(new StartRedirectedOffSite(offSite));
         return;
       }
       origin = canonical;
@@ -91,7 +105,15 @@ export async function guardNavigations(page: Page, trace: TraceWriter, seed: { o
       return;
     }
     refuse(`off-origin redirect ${new URL(url).origin}`);
-    void page.goto(lastOnOrigin ?? 'about:blank').catch(() => undefined);
+    if (++offOriginCommits >= MAX_OFF_ORIGIN_REDIRECTS) {
+      const e = new OffOriginRedirectCap();
+      trace.write({ type: 'error', step: 0, message: `guard: ${e.message}` });
+      halt(e);
+      return;
+    }
+    const back = lastOnOrigin ?? 'about:blank'; // always set here: the first commit is on-origin or halts
+    bounceTo = back.split('#')[0];
+    void page.goto(back).catch(() => undefined);
   });
   await context.route('**/*', async (route) => {
     const req = route.request();
@@ -105,8 +127,8 @@ export async function guardNavigations(page: Page, trace: TraceWriter, seed: { o
     if (frame.page() !== page) return route.abort('blockedbyclient').catch(() => undefined);
     if (frame !== page.mainFrame()) return route.continue();
     const url = new URL(req.url());
-    if (offSite) {
-      refuse(`navigation after off-site start ${url.origin}`);
+    if (stopped) {
+      refuse(`navigation after the run stopped ${url.origin}`);
       return stay(route);
     }
     if (url.origin !== origin) {
@@ -117,6 +139,10 @@ export async function guardNavigations(page: Page, trace: TraceWriter, seed: { o
       refuse(`robots.txt disallows ${req.url()}`);
       return stay(route);
     }
+    if (req.url() === bounceTo) {
+      bounceTo = undefined;
+      return route.continue().catch(() => undefined);
+    }
     const at = Math.max(Date.now(), nextSlot);
     nextSlot = at + NAV_INTERVAL_MS;
     if (at > Date.now()) await sleep(at - Date.now());
@@ -124,7 +150,7 @@ export async function guardNavigations(page: Page, trace: TraceWriter, seed: { o
   });
   return {
     origin: () => {
-      if (offSite) throw new StartRedirectedOffSite(offSite);
+      if (stopped) throw stopped;
       return origin;
     },
   };
@@ -173,7 +199,7 @@ export async function runSite(opts: RunSiteOptions): Promise<{ runId: string; re
 
     const siteMap = new SiteMap(start.hostname, opts.startUrl);
     const budget = new RunBudget({ ...DEFAULT_CAPS, ...opts.caps });
-    const recorder = new Recorder({ engine, trace, store, siteMap, runId, site: start.hostname, budget });
+    const recorder = new Recorder({ engine, trace, store, siteMap, runId, site: start.hostname, budget, origin: guard.origin });
     await recorder.start();
     try {
       const model = stoppable(opts.model ?? new AnthropicExplorerModel(), opts.signal);

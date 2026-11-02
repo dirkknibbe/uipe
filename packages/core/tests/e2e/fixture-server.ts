@@ -13,6 +13,8 @@ const CONTENT_TYPES: Record<string, string> = {
 
 export interface FixtureServer {
   baseUrl: string;
+  /** Every request path received, in order. */
+  requests: string[];
   close: () => Promise<void>;
 }
 
@@ -24,7 +26,9 @@ export interface FixtureServer {
  */
 export async function startFixtureServer(rootDir: string, redirects: Record<string, string> = {}): Promise<FixtureServer> {
   const root = normalize(rootDir);
+  const requests: string[] = [];
   const server = createServer(async (req, res) => {
+    requests.push(req.url ?? '/');
     try {
       const pathname = new URL(req.url ?? '/', 'http://127.0.0.1').pathname;
       const location = redirects[pathname];
@@ -53,6 +57,7 @@ export async function startFixtureServer(rootDir: string, redirects: Record<stri
   const port = typeof addr === 'object' && addr ? addr.port : 0;
   return {
     baseUrl: `http://127.0.0.1:${port}`,
+    requests,
     close: () => new Promise<void>(resolve => server.close(() => resolve())),
   };
 }

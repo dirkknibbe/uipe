@@ -74,6 +74,8 @@ const scene = (id: string, extra: Partial<SceneNode> = {}): SceneNode => ({
   isLoading: false, isFocused: false, visualState: 'normal', children: [], ...extra,
 } as SceneNode);
 
+const pageUrl = { value: 'https://x.test/' };
+
 function fakeEngine(title: { value: string }) {
   const stream = Object.assign(new EventEmitter(), {
     getNormalizer: () => ({ fromWallTimeMs: (w: number) => w - T0, fromPerformanceNow: (p: number) => p, fromCdpMonotonicSeconds: (s: number) => s * 1000 }),
@@ -82,13 +84,13 @@ function fakeEngine(title: { value: string }) {
     addInitScript: async () => undefined,
     evaluate: async () => 0,
     title: async () => title.value,
-    url: () => 'https://x.test/',
+    url: () => pageUrl.value,
     frames: () => [{ url: () => 'https://x.test/' }],
     mainFrame: () => null,
     viewportSize: () => VP,
   });
   const graph = (): SceneGraph => ({
-    timestamp: 0, url: 'https://x.test/', viewport: VP, scrollPosition: { x: 0, y: 0 },
+    timestamp: 0, url: pageUrl.value, viewport: VP, scrollPosition: { x: 0, y: 0 },
     nodes: (fake.nodes as StructuralNode[]).map((n) => scene(n.id)), rootNodeIds: [],
   });
   const png = sharp({ create: { width: 8, height: 8, channels: 3, background: '#888' } }).png().toBuffer();
@@ -103,17 +105,17 @@ function fakeEngine(title: { value: string }) {
 }
 
 let dir: string;
-beforeEach(async () => { dir = await mkdtemp(join(tmpdir(), 'uipe-rec-')); fake.frames = await movingFrames(); fake.liveBuffer = false; fake.traceMarker = true; });
+beforeEach(async () => { dir = await mkdtemp(join(tmpdir(), 'uipe-rec-')); fake.frames = await movingFrames(); fake.liveBuffer = false; fake.traceMarker = true; pageUrl.value = 'https://x.test/'; });
 afterEach(async () => { await rm(dir, { recursive: true, force: true }); });
 
-async function setup(pageTitle = 'Home', budget?: { exceeded: () => null | 'wall' }) {
+async function setup(pageTitle = 'Home', budget?: { exceeded: () => null | 'wall' }, origin?: () => string) {
   const title = { value: pageTitle };
   const { engine, stream } = fakeEngine(title);
   const store = new LocalClipStore(dir);
   const tracePath = join(dir, 'trace.jsonl');
   const trace = new TraceWriter(tracePath, 'r1', 'x.test');
   const siteMap = new SiteMap('x.test', 'https://x.test/');
-  const rec = new Recorder({ engine, trace, store, siteMap, runId: 'r1', site: 'x.test', segmenterOptions: { settleMs: 30 }, ...(budget ? { budget } : {}) });
+  const rec = new Recorder({ engine, trace, store, siteMap, runId: 'r1', site: 'x.test', segmenterOptions: { settleMs: 30 }, ...(budget ? { budget } : {}), ...(origin ? { origin } : {}) });
   await rec.start();
   /** one click trigger whose animation runs on the node marked with `marker` */
   const fire = async (id: string, marker: string) => {
@@ -284,6 +286,37 @@ describe('Recorder navigation', () => {
     expect(byTrigger('t1').files.frames).toHaveLength(oldFrames.length);
     expect(byTrigger('t2').files.frames).toHaveLength(newFrames.length);
     await rec.stop();
+  });
+});
+
+describe('Recorder origin', () => {
+  it('records no clip when the page it would capture is off the allowed origin', async () => {
+    fake.nodes = [snode('dom-1', 'a1')];
+    const { rec, store, fire, records } = await setup('Home', undefined, () => 'https://x.test');
+    pageUrl.value = 'https://evil.test/';
+    await fire('t1', 'a1');
+    expect(await store.listClips('r1')).toEqual([]);
+    expect((await records()).some((r) => r.type === 'error' && /off-origin/.test(r.message))).toBe(true);
+    await rec.stop();
+  });
+
+  it('drops episodes that ran on an off-origin page once it is navigated away from', async () => {
+    fake.nodes = [snode('dom-1', 'a1')];
+    const { rec, store, engine, stream } = await setup('Home', undefined, () => 'https://x.test');
+    const page = engine.runtime.getPage();
+    await rec.beginTrigger({ id: 't1', kind: 'action', timestamp: 0, stateId: 's1', action: { type: 'click', x: 1, y: 1 } });
+    pageUrl.value = 'https://evil.test/';
+    page.emit('framenavigated', null);
+    stream.emit('event', { type: 'animation-start', timestamp: rec.now(), payload: { animationId: 'a1', name: 'pop', duration: 50, iterations: 1, targetMarker: 'a1' } });
+    await new Promise((r) => setTimeout(r, 20));
+    stream.emit('event', { type: 'animation-end', timestamp: rec.now(), payload: { animationId: 'a1' } });
+    pageUrl.value = 'https://x.test/'; // the guard's bounce back
+    page.emit('framenavigated', null);
+    await rec.awaitSettle();
+    await rec.stop();
+    // t1's own episode closed on-origin at the first navigation and may be kept; nothing from the off-origin page is.
+    const clips = await store.listClips('r1');
+    expect(clips.flatMap((c) => c.episode.animations.map((a) => a.animationId))).not.toContain('a1');
   });
 });
 

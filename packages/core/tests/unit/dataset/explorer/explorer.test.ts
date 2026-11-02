@@ -15,8 +15,11 @@ const node = (id: string, fields: Partial<SceneNode>, box = { x: 0, y: 0, width:
   zLayer: 0, interactionType: 'clickable', isDisabled: false, isLoading: false, isFocused: false, visualState: 'normal', children: [],
 } as unknown as SceneNode);
 
-function harness(script: ExplorerCall[], opts: { caps?: Partial<BudgetCaps>; tokens?: [number, number]; nodes?: SceneNode[]; target?: { label: string; submit: boolean } | null; origin?: () => string } = {}) {
+function harness(script: ExplorerCall[], opts: { caps?: Partial<BudgetCaps>; tokens?: [number, number]; nodes?: SceneNode[]; target?: { label: string; submit: boolean } | null; origin?: () => string;
+  /** an act lands here (a redirect off-origin); the guard's bounce restores the page on the next url read */
+  landOff?: string; stuckOff?: boolean } = {}) {
   let url = START;
+  let bounceTo: string | undefined;
   const records: TraceInput[] = [];
   const triggers: Trigger[] = [];
   const scrolls: number[] = [];
@@ -33,6 +36,7 @@ function harness(script: ExplorerCall[], opts: { caps?: Partial<BudgetCaps>; tok
     call: vi.fn(async (name: string, args: Record<string, unknown>) => {
       if (name === 'navigate') url = String(args.url);
       if (name === 'act' && args.type === 'navigate') url = String(args.url);
+      if (name === 'act' && opts.landOff) { bounceTo = opts.stuckOff ? undefined : url; url = opts.landOff; }
       return { text: name === 'get_scene' ? '<untrusted_page_content>\nscene\n</untrusted_page_content>' : `${name} ok`, isError: false };
     }),
   };
@@ -51,6 +55,11 @@ function harness(script: ExplorerCall[], opts: { caps?: Partial<BudgetCaps>; tok
       const el = t && { evaluate: async () => t, dispose: async () => undefined };
       return { asElement: () => el, dispose: async () => undefined };
     }),
+    url: () => {
+      const now = url;
+      if (bounceTo) { url = bounceTo; bounceTo = undefined; }
+      return now;
+    },
     viewportSize: () => VP,
     title: async () => 'Site',
     frames: () => [],
@@ -63,7 +72,7 @@ function harness(script: ExplorerCall[], opts: { caps?: Partial<BudgetCaps>; tok
     trace: { write: (r: TraceInput) => { records.push(r); return `t${records.length}`; } } as never,
     engine: engine as never, startUrl: START, sleep: async () => undefined, ...(opts.origin ? { origin: opts.origin } : {}),
   });
-  return { explorer, records, triggers, scrolls, turns, tools, budget };
+  return { explorer, records, triggers, scrolls, turns, tools, budget, engine, recorder };
 }
 
 const act = (args: Record<string, unknown>, rationale = 'r'): ExplorerCall => ({ tool: 'act', args, rationale });
@@ -83,6 +92,29 @@ describe('Explorer', () => {
     expect((await h.explorer.run()).stopReason).toBe('error');
     expect(h.records).toContainEqual(expect.objectContaining({ type: 'error', message: expect.stringContaining('redirected off-site') }));
     expect(h.turns).toHaveLength(0);
+  });
+
+  it('never observes, maps or settles on a page an action redirected off-origin', async () => {
+    const h = harness([act({ type: 'click', x: 5, y: 5 }), done], { landOff: 'https://evil.test/x' });
+    await h.explorer.run();
+    const graphsBefore = h.engine.captureGraph.mock.calls.length;
+    const settles = h.recorder.awaitSettle.mock.calls.length;
+    const json = (h.explorer as unknown as { deps: { siteMap: SiteMap } }).deps.siteMap.toJSON();
+    expect(json.states.map((st) => st.url)).toEqual([START]);
+    expect(json.transitions).toEqual([]);
+    expect(graphsBefore).toBe(1); // the start page only
+    expect(settles).toBe(3); // the start page's load and its two scroll steps
+    const second = h.turns[1] as { observation: string; history: { resultSummary: string }[] };
+    expect(second.observation).not.toMatch(/scene|untrusted_page_content/);
+    expect(second.history[0].resultSummary).toBe('refused: off-origin page');
+    expect(h.records).toContainEqual(expect.objectContaining({ type: 'tool-refused', tool: 'act', detail: 'off-origin page https://evil.test' }));
+  });
+
+  it('stops with an error when the page does not come back on-origin', async () => {
+    const h = harness([act({ type: 'click', x: 5, y: 5 }), done], { landOff: 'https://evil.test/x', stuckOff: true });
+    expect((await h.explorer.run()).stopReason).toBe('error');
+    expect(h.records).toContainEqual(expect.objectContaining({ type: 'error', message: expect.stringContaining('did not return to') }));
+    expect(h.turns).toHaveLength(1);
   });
 
   it('refuses_off_rail_tool_calls_and_counts_step', async () => {

@@ -49,4 +49,12 @@ describe('replayReducedMotion', () => {
     expect(page.emulateMedia).not.toHaveBeenCalled();
     expect(page.goto).not.toHaveBeenCalled();
   });
+
+  it('replays_from_the_landed_start_page_not_the_pre_redirect_start_url', async () => {
+    const { page } = fakePage();
+    const sm = new SiteMap('x', 'https://x.test/');
+    const s = sm.observe('https://www.x.test/', { url: 'https://www.x.test/', nodes: [] } as any, 0);
+    await replayReducedMotion({ ...base, page, siteMap: sm, stateId: s.id, trigger: trigger({ type: 'click', x: 1, y: 1 }) });
+    expect(page.goto).toHaveBeenCalledWith('https://www.x.test/');
+  });
 });

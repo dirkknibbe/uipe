@@ -7,6 +7,7 @@ const HTML = `
 <button id="buy" aria-label=""><svg id="icon" width="20" height="20"><rect width="20" height="20"/></svg> Buy now</button>
 <form><input id="q"><button id="go">Go</button><input id="next" type="submit" value="Next"><button id="odd" type="foo">Odd</button><input id="img" type="IMAGE" alt="Img"></form>
 <button id="plain">Open details</button>
+<button id="lone-odd" type="foo">Lone odd</button><button id="lone-sub" type="submit">Lone submit</button>
 <a class="dup" href="#a">A</a><a class="dup" href="#b">B</a>`;
 
 let browser: Browser;
@@ -39,6 +40,11 @@ describe('resolveClickTarget (real Chromium)', () => {
     expect(await resolveClickTarget(page, { type: 'clickSelector', selector: '#odd' })).toEqual({ label: 'Odd', submit: true });
     expect(await resolveClickTarget(page, { type: 'clickSelector', selector: '#img' })).toMatchObject({ submit: true });
     expect(await resolveClickTarget(page, { type: 'clickSelector', selector: '#plain' })).toEqual({ label: 'Open details', submit: false });
+  });
+
+  it('flags a formless button whose type attribute resolves to submit', async () => {
+    expect(await resolveClickTarget(page, { type: 'clickSelector', selector: '#lone-odd' })).toEqual({ label: 'Lone odd', submit: true });
+    expect(await resolveClickTarget(page, { type: 'clickSelector', selector: '#lone-sub' })).toEqual({ label: 'Lone submit', submit: true });
   });
 
   it('returns null when the target cannot be pinned to one element', async () => {

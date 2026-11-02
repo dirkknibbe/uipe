@@ -55,6 +55,11 @@ export class SiteMap {
     this.pendingClips.set(triggerId, [...(this.pendingClips.get(triggerId) ?? []), clipId]);
   }
 
+  /** The URL the start page landed on (after any same-site redirect); pathTo() starts there. */
+  get startStateUrl(): string {
+    return (this.states.values().next().value as SiteState | undefined)?.url ?? this.startUrl;
+  }
+
   /** BFS from the first observed state (the start page). */
   pathTo(stateId: string): BrowserAction[] | null {
     const start = this.states.values().next().value as SiteState | undefined;

@@ -31,8 +31,8 @@ export async function replayReducedMotion(args: {
 
   try {
     await page.emulateMedia({ reducedMotion: 'reduce' });
-    assertNavigableUrl(siteMap.startUrl);
-    await page.goto(siteMap.startUrl);
+    assertNavigableUrl(siteMap.startStateUrl);
+    await page.goto(siteMap.startStateUrl);
     for (const action of path) {
       await executeAction(page, action);
       await page.waitForTimeout(settleMs);

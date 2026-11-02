@@ -40,6 +40,10 @@ const CAP_REASON = { steps: 'cap-steps', usd: 'cap-usd', wall: 'cap-wall' } as c
 const OPEN = '<untrusted_page_content>';
 const CLOSE = '</untrusted_page_content>';
 const TRUNCATED = '\n...[truncated]';
+const OFF_ORIGIN_POLL_MS = 100;
+// The guard's bounce skips the navigation rate slot, so the page is back within a page load.
+const OFF_ORIGIN_POLLS = 50;
+const OFF_ORIGIN_OBSERVATION = 'The last action led off the start site. It was undone and that page was not observed.';
 
 const errMessage = (e: unknown) => (e instanceof Error ? e.message : String(e));
 const count = (s: string, sub: string) => s.split(sub).length - 1;
@@ -142,9 +146,12 @@ export class Explorer {
     const trigger = { ...this.trigger('action', this.currentState), action };
     await recorder.beginTrigger(trigger);
     const res = await tools.call(call.tool, call.tool === 'navigate' ? { url: call.args.url } : actArgs);
+    const landed = this.pageUrl();
+    if (!this.onOrigin(landed)) return this.refuseOffOrigin(call, step, landed);
     await recorder.awaitSettle();
 
     const graph = await engine.captureGraph(false);
+    if (!this.onOrigin(graph.url)) return this.refuseOffOrigin(call, step, graph.url);
     const state = siteMap.observe(graph.url, graph, step);
     siteMap.addTransition({ from: this.currentState, to: state.id, action, triggerId: trigger.id, clipIds: [] });
     this.currentState = state.id;
@@ -157,6 +164,26 @@ export class Explorer {
     }
     this.observation = await this.buildObservation();
     return `${res.isError ? 'error' : 'ok'}; state ${state.id}${isNew ? ' (new)' : ''}`;
+  }
+
+  private pageUrl(): string {
+    return this.deps.engine.runtime.getPage().url();
+  }
+
+  /** origin() throws once the guard stops the run; that propagates and ends it. */
+  private onOrigin(url: string): boolean {
+    return originOf(url) === this.origin();
+  }
+
+  /** Spec 5.1: an off-origin page (a redirect the guard is bouncing) is never observed, mapped or shown to the model. */
+  private async refuseOffOrigin(call: ExplorerCall, step: number, url: string): Promise<string> {
+    this.deps.trace.write({ type: 'tool-refused', step, tool: String(call.tool), detail: `off-origin page ${originOf(url)}` });
+    for (let i = 0; !this.onOrigin(this.pageUrl()); i++) {
+      if (i >= OFF_ORIGIN_POLLS) throw new Error(`page did not return to ${this.origin()} after an off-origin redirect`);
+      await this.sleep(OFF_ORIGIN_POLL_MS);
+    }
+    this.observation = OFF_ORIGIN_OBSERVATION;
+    return 'refused: off-origin page';
   }
 
   private async scrollSweep(): Promise<void> {
