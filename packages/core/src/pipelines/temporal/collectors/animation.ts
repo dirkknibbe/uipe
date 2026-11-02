@@ -1,6 +1,6 @@
 import type { Page, CDPSession } from 'playwright';
 import type { Collector, AnimationStartPayload } from './types.js';
-import type { TemporalEventStream } from '../event-stream.js';
+import type { TemporalEventStream, ClockNormalizer } from '../event-stream.js';
 import { AnimationVerifier } from '../verifiers/animation/verifier.js';
 
 let nextId = 0;
@@ -11,6 +11,9 @@ interface AnimationStartState {
   startTimestamp: number;
   wallTimeAtStart: number;
   duration: number;
+  /** startTimestamp is on this clock; the stream re-anchors on every navigation */
+  normalizer: ClockNormalizer;
+  key: string;
   completionTimer?: ReturnType<typeof setTimeout>;
 }
 
@@ -67,6 +70,8 @@ export class AnimationCollector implements Collector {
           startTimestamp,
           wallTimeAtStart,
           duration,
+          normalizer,
+          key,
         };
         this.active.set(a.id, state);
 
@@ -135,15 +140,17 @@ export class AnimationCollector implements Collector {
             } catch (err) {
               console.warn(`AnimationCollector: observation failed (${(err as Error).message})`);
             }
+            this.active.delete(a.id);
+            const timestamp = this.endTimestamp(stream, state, state.wallTimeAtStart + totalMs);
+            if (timestamp === undefined) return;
             stream.push({
               id: `anim-end-${++nextId}`,
               type: 'animation-end',
-              timestamp: startTimestamp + totalMs,
+              timestamp,
               payload: deviation
                 ? { animationId: a.id, reason: 'completed', deviation }
                 : { animationId: a.id, reason: 'completed' },
             });
-            this.active.delete(a.id);
           }, totalMs + 16);
         }
       });
@@ -151,15 +158,13 @@ export class AnimationCollector implements Collector {
       this.cdp.on('Animation.animationCanceled', (params: any) => {
         const id = params.id;
         const state = this.active.get(id);
-        let timestamp: number;
         if (state) {
           if (state.completionTimer) clearTimeout(state.completionTimer);
-          const elapsed = Date.now() - state.wallTimeAtStart;
-          timestamp = state.startTimestamp + elapsed;
           this.active.delete(id);
-        } else {
-          timestamp = (stream.getNormalizer() ?? attachNormalizer).fromWallTimeMs(Date.now());
         }
+        const now = Date.now();
+        const timestamp = (state && this.endTimestamp(stream, state, now))
+          ?? (stream.getNormalizer() ?? attachNormalizer).fromWallTimeMs(now);
 
         this.verifier.discard(id);
 
@@ -178,6 +183,18 @@ export class AnimationCollector implements Collector {
     } catch (err) {
       console.warn(`AnimationCollector: attach failed (${(err as Error).message})`);
     }
+  }
+
+  /**
+   * An end on the clock its start was stamped on. After a re-anchor that clock is gone: the end moves
+   * to the current clock if this session replayed the start (the document survived), else it is
+   * dropped (the document died with the navigation; an old-clock stamp would land in the new one).
+   */
+  private endTimestamp(stream: TemporalEventStream, state: AnimationStartState, wallMs: number): number | undefined {
+    const current = stream.getNormalizer();
+    if (current === state.normalizer) return state.startTimestamp + (wallMs - state.wallTimeAtStart);
+    if (!current || !this.reported.has(state.key)) return undefined;
+    return current.fromWallTimeMs(wallMs);
   }
 
   private async fillTarget(cdp: CDPSession, params: any, payload: AnimationStartPayload): Promise<void> {

@@ -207,6 +207,62 @@ describe('AnimationCollector', () => {
     }
   });
 
+  it('drops the end of an animation whose document died when the stream re-anchored its clock', async () => {
+    vi.useFakeTimers();
+    try {
+      const { cdp, handlers } = makeMockCdp();
+      const page = makeMockPage(cdp);
+      const stream = new TemporalEventStream();
+      await stream.attach(page);
+      const collector = new AnimationCollector();
+      await collector.attach(page, stream);
+      await handlers.get('Animation.animationStarted')![0]({
+        animation: { id: 'hover-u', name: 'underline', startTime: 0, playbackRate: 1, source: { duration: 250, iterations: 1 } },
+      });
+
+      // Cross-document navigation: new clock, and the new session never replays 'hover-u'.
+      await stream.attach(page);
+      await collector.detach();
+      await collector.attach(page, stream);
+      await vi.advanceTimersByTimeAsync(400);
+
+      expect(stream.getEvents().filter((e) => e.type === 'animation-end')).toEqual([]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('re-stamps on the new clock the end of an animation the new session replayed after a re-anchor', async () => {
+    vi.useFakeTimers();
+    try {
+      const { cdp, handlers } = makeMockCdp();
+      const page = makeMockPage(cdp);
+      const stream = new TemporalEventStream();
+      await stream.attach(page);
+      const collector = new AnimationCollector();
+      await collector.attach(page, stream);
+      const start = { animation: { id: 'spa-r', name: 'rise', startTime: 0, playbackRate: 1, source: { duration: 300, iterations: 1 } } };
+      await handlers.get('Animation.animationStarted')![0](start);
+      const wallAtStart = Date.now();
+
+      await vi.advanceTimersByTimeAsync(100);
+      // Same-document navigation: the clock re-anchors, but the animation survives and is replayed.
+      await stream.attach(page);
+      await collector.detach();
+      await collector.attach(page, stream);
+      const replay = handlers.get('Animation.animationStarted')!;
+      await replay[replay.length - 1](start);
+      await vi.advanceTimersByTimeAsync(300);
+
+      const ends = stream.getEvents().filter((e) => e.type === 'animation-end');
+      expect(ends).toHaveLength(1);
+      expect(ends[0].payload).toMatchObject({ animationId: 'spa-r', reason: 'completed' });
+      expect(ends[0].timestamp).toBeCloseTo(stream.getNormalizer()!.fromWallTimeMs(wallAtStart + 300), 0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('listens before Animation.enable, which replays existing animations before its reply', async () => {
     const { cdp, handlers } = makeMockCdp();
     (cdp.send as any).mockImplementation(async (method: string) => {
