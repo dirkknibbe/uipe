@@ -183,7 +183,9 @@ export class Explorer {
     if (call.tool !== 'act' || type !== 'click' || typeof x !== 'number' || typeof y !== 'number' || !this.graph) return undefined;
     const hits = this.graph.nodes.filter(({ boundingBox: b }) => x >= b.x && x <= b.x + b.width && y >= b.y && y <= b.y + b.height);
     const area = (n: SceneGraph['nodes'][number]) => n.boundingBox.width * n.boundingBox.height;
-    return hits.sort((a, b) => area(a) - area(b))[0]?.label;
+    const hit = hits.sort((a, b) => area(a) - area(b))[0];
+    // Fused `label` is a role/detection class ('button'); visible text lives in `text` / `imageAlt`.
+    return hit ? [hit.text, hit.imageAlt, hit.label].filter(Boolean).join(' ') || undefined : undefined;
   }
 
   private trigger(kind: TriggerKind, stateId: string): Trigger {
