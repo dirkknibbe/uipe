@@ -36,8 +36,8 @@ describe('SiteMap', () => {
 
   it('path_to_unreachable_returns_null', () => {
     const { m } = built();
-    m.observe('https://x.test/island', graph('https://x.test/island', [node('1', 'Island')]), 9);
-    expect(m.pathTo(SiteMap.stateIdFor('https://x.test/island', graph('', [node('1', 'Island')])))).toBeNull();
+    const island = m.observe('https://x.test/island', graph('https://x.test/island', [node('1', 'Island')]), 9);
+    expect(m.pathTo(island.id)).toBeNull();
   });
 
   it('sitemap_json_round_trips_with_version_1', () => {
