@@ -4,7 +4,7 @@ interface Base { id: string; runId: string; site: string; step: number; ts: numb
 
 export type TraceRecord =
   | (Base & { type: 'run-start' })
-  | (Base & { type: 'run-end' })
+  | (Base & { type: 'run-end'; stopReason?: string })
   | (Base & { type: 'explorer-step'; observationSummary: string; decision: string; rationale: string; inputTokens: number; outputTokens: number; usd: number })
   | (Base & { type: 'tool-call'; tool: string; detail?: string })
   | (Base & { type: 'tool-refused'; tool: string; detail?: string })

@@ -30,6 +30,7 @@ export function buildReport(trace: TraceRecord[]): RunReport {
   const stateSigs = new Set<string>();
   const capsHit: string[] = [];
   let kept = 0, duplicates = 0, rejected = 0, transitions = 0, usd = 0, ended = false;
+  let endReason: string | undefined;
   for (const r of trace) {
     switch (r.type) {
       case 'clip-kept': kept++; keptEpisodes.add(r.episodeId); break;
@@ -38,14 +39,14 @@ export function buildReport(trace: TraceRecord[]): RunReport {
       case 'cap-hit': capsHit.push(r.cap); break;
       case 'trigger': transitions++; break;
       case 'explorer-step': usd += r.usd; stateSigs.add(r.observationSummary); break;
-      case 'run-end': ended = true; break;
+      case 'run-end': ended = true; endReason = r.stopReason; break;
       default: break;
     }
   }
   const duplicateRate = kept + duplicates === 0 ? 0 : duplicates / (kept + duplicates);
   return {
     runId: trace[0]?.runId ?? '', site: trace[0]?.site ?? '',
-    stopReason: !ended ? 'interrupted' : capsHit.at(-1) ?? 'completed',
+    stopReason: !ended ? 'interrupted' : endReason ?? capsHit.at(-1) ?? 'completed',
     kept, rejected, duplicates, rejectedByReason,
     uniqueEpisodes: keptEpisodes.size,
     // ponytail: no state records in the trace; distinct explorer observations stand in for states
