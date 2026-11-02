@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { createServerWithEngine } from '../../mcp/server.js';
 import { originOf } from '../../mcp/engine.js';
 import { DEFAULT_CAPS, RunBudget, type BudgetCaps } from '../budget.js';
-import { fetchRobots } from '../crawl/robots.js';
+import { fetchRobots, type Robots } from '../crawl/robots.js';
 import { AnthropicExplorerModel, type ExplorerModel } from '../explorer/model.js';
 import { Explorer, type ExplorerStopReason } from '../explorer/explorer.js';
 import { Recorder } from '../recorder/recorder.js';
@@ -28,12 +28,33 @@ const NAV_INTERVAL_MS = 2_000;
 const errMessage = (e: unknown) => (e instanceof Error ? e.message : String(e));
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
-/** At most one document navigation per origin per NAV_INTERVAL_MS; subresources pass straight through. */
-async function rateLimitNavigations(page: Page): Promise<void> {
+/**
+ * Main-frame document navigations only (subresources pass straight through): refuse any URL robots.txt
+ * disallows for its own origin (cached per origin, start origin seeded), then allow at most one per
+ * origin per NAV_INTERVAL_MS.
+ */
+export async function guardNavigations(
+  page: Page, userAgent: string, trace: TraceWriter, seed: { origin: string; robots: Robots },
+  fetchRobotsImpl: typeof fetchRobots = fetchRobots,
+): Promise<void> {
   const nextSlot = new Map<string, number>();
+  const robotsByOrigin = new Map<string, Promise<Robots>>([[seed.origin, Promise.resolve(seed.robots)]]);
+  const robotsFor = (origin: string) => {
+    let r = robotsByOrigin.get(origin);
+    if (!r) robotsByOrigin.set(origin, (r = fetchRobotsImpl(origin, userAgent)));
+    return r;
+  };
   await page.route('**/*', async (route) => {
     const req = route.request();
     if (!req.isNavigationRequest() || req.frame() !== page.mainFrame()) return route.continue();
+    const url = new URL(req.url());
+    if (url.protocol === 'http:' || url.protocol === 'https:') {
+      const robots = await robotsFor(url.origin);
+      if (!robots.allowed(url.pathname + url.search)) {
+        trace.write({ type: 'tool-refused', step: 0, tool: 'navigate', detail: `robots.txt disallows ${req.url()}` });
+        return route.abort('blockedbyclient').catch(() => undefined);
+      }
+    }
     const origin = originOf(req.url());
     const at = Math.max(Date.now(), nextSlot.get(origin) ?? 0);
     nextSlot.set(origin, at + NAV_INTERVAL_MS);
@@ -81,7 +102,7 @@ export async function runSite(opts: RunSiteOptions): Promise<{ runId: string; re
     await engine.ensureLaunched();
     const page = engine.runtime.getPage();
     await page.context().setExtraHTTPHeaders({ 'User-Agent': userAgent });
-    await rateLimitNavigations(page);
+    await guardNavigations(page, userAgent, trace, { origin: start.origin, robots });
 
     const siteMap = new SiteMap(start.hostname, opts.startUrl);
     const budget = new RunBudget({ ...DEFAULT_CAPS, ...opts.caps });

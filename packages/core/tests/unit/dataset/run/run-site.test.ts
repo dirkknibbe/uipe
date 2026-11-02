@@ -29,7 +29,7 @@ vi.mock('../../../../src/dataset/crawl/robots.js', () => ({
   fetchRobots: async () => ({ status: 'ok', allowed: () => h.robotsAllowed }),
 }));
 
-import { runSite, ContactUrlRequired } from '../../../../src/dataset/run/run-site.js';
+import { runSite, ContactUrlRequired, guardNavigations } from '../../../../src/dataset/run/run-site.js';
 
 const model = { next: vi.fn() };
 async function setup() {
@@ -82,5 +82,44 @@ describe('runSite', () => {
     await expect(runSite({ startUrl: 'https://a.test/', contactUrl: 'https://me.test', model, store })).rejects.toThrow('kaboom');
     expect(h.close).toHaveBeenCalledTimes(1);
     expect(h.recorderStop).toHaveBeenCalled();
+  });
+});
+
+describe('guardNavigations', () => {
+  async function harness(fetchRobotsImpl: any) {
+    let handler: any;
+    const main = {};
+    const page: any = { route: async (_: string, h: any) => { handler = h; }, mainFrame: () => main };
+    const written: any[] = [];
+    const trace: any = { write: (r: any) => written.push(r) };
+    await guardNavigations(page, 'ua', trace, { origin: 'https://a.test', robots: { status: 'ok', allowed: (p: string) => !p.startsWith('/private') } }, fetchRobotsImpl);
+    const nav = async (url: string, frame: any = main) => {
+      const route = { request: () => ({ isNavigationRequest: () => true, frame: () => frame, url: () => url }), continue: vi.fn(async () => undefined), abort: vi.fn(async () => undefined) };
+      await handler(route);
+      return route;
+    };
+    return { nav, written };
+  }
+
+  it('aborts_later_same_origin_navigation_into_disallowed_path_and_traces_it', async () => {
+    const { nav, written } = await harness(vi.fn());
+    const r = await nav('https://a.test/private/x');
+    expect(r.abort).toHaveBeenCalled(); expect(r.continue).not.toHaveBeenCalled();
+    expect(written[0]).toMatchObject({ type: 'tool-refused', tool: 'navigate' });
+  });
+
+  it('checks_robots_per_cross_origin_and_caches_it', async () => {
+    const f = vi.fn(async () => ({ status: 'ok', allowed: (p: string) => p !== '/no' }));
+    const { nav } = await harness(f);
+    expect((await nav('https://b.test/no')).abort).toHaveBeenCalled();
+    expect((await nav('https://b.test/ok')).continue).toHaveBeenCalled();
+    expect(f).toHaveBeenCalledTimes(1);
+  });
+
+  it('subframe_navigations_skip_the_check', async () => {
+    const f = vi.fn();
+    const { nav } = await harness(f);
+    expect((await nav('https://b.test/no', {})).continue).toHaveBeenCalled();
+    expect(f).not.toHaveBeenCalled();
   });
 });
