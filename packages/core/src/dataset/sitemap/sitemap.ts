@@ -20,6 +20,8 @@ function signature(graph: SceneGraph): string {
 export class SiteMap {
   private states = new Map<string, SiteState>();
   private transitions: SiteTransition[] = [];
+  /** clip ids recorded before the explorer adds their trigger's transition */
+  private pendingClips = new Map<string, string[]>();
 
   constructor(readonly site: string, readonly startUrl: string) {}
 
@@ -37,7 +39,20 @@ export class SiteMap {
   }
 
   addTransition(t: SiteTransition): void {
-    this.transitions.push(t);
+    const pending = this.pendingClips.get(t.triggerId) ?? [];
+    this.pendingClips.delete(t.triggerId);
+    this.transitions.push({ ...t, clipIds: [...t.clipIds, ...pending] });
+  }
+
+  /** The recorder keeps clips before the explorer records the transition, so either order works. */
+  addClip(triggerId: string, clipId: string): void {
+    const i = this.transitions.findIndex((t) => t.triggerId === triggerId);
+    if (i >= 0) {
+      const t = this.transitions[i];
+      this.transitions[i] = { ...t, clipIds: [...t.clipIds, clipId] };
+      return;
+    }
+    this.pendingClips.set(triggerId, [...(this.pendingClips.get(triggerId) ?? []), clipId]);
   }
 
   /** BFS from the first observed state (the start page). */

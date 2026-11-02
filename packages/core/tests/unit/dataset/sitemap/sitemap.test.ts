@@ -48,4 +48,13 @@ describe('SiteMap', () => {
     expect(back.toJSON()).toEqual(json);
     expect(back.pathTo(s3.id)).toEqual(m.pathTo(s3.id));
   });
+
+  it('add_clip_attaches_to_transition_in_either_order', () => {
+    const m = new SiteMap('x', 'https://x.test/');
+    m.addClip('t1', 'clip-0001');
+    m.addTransition({ from: 'a', to: 'b', action: click(1), triggerId: 't1', clipIds: [] });
+    m.addClip('t1', 'clip-0002');
+    m.addClip('t2', 'clip-0003');
+    expect(m.toJSON().transitions).toEqual([{ from: 'a', to: 'b', action: click(1), triggerId: 't1', clipIds: ['clip-0001', 'clip-0002'] }]);
+  });
 });

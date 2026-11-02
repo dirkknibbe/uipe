@@ -11,7 +11,7 @@ export interface SegmenterOptions {
   preRollMs: number;
 }
 
-const DEFAULTS: SegmenterOptions = { settleMs: 300, maxEpisodeMs: 10_000, preRollMs: 100 };
+export const SEGMENTER_DEFAULTS: SegmenterOptions = { settleMs: 300, maxEpisodeMs: 10_000, preRollMs: 100 };
 
 interface Open {
   trigger: Trigger;
@@ -34,7 +34,7 @@ export class Segmenter {
   private seq = 0;
 
   constructor(opts: Partial<SegmenterOptions> = {}) {
-    this.opts = { ...DEFAULTS, ...opts };
+    this.opts = { ...SEGMENTER_DEFAULTS, ...opts };
   }
 
   onTrigger(t: Trigger): void {
@@ -70,6 +70,10 @@ export class Segmenter {
   onNavigated(ts: number): void {
     this.advance(ts);
     this.close('navigated', ts);
+  }
+
+  get isOpen(): boolean {
+    return this.open !== null;
   }
 
   tick(now: number): Episode[] {
