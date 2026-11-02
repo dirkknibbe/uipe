@@ -78,6 +78,8 @@ export class Recorder {
   private clipSeq = 0;
   private pending?: { triggerId: string; before?: Snapshot; traceRef: string };
   private last?: Snapshot;
+  /** Episodes closed by a main-frame navigation, with frames read before the clock re-anchored. */
+  private navClosed: { ep: Episode; frames: CapturedFrame[] }[] = [];
   private readonly counts = { kept: 0, rejected: 0, duplicates: 0 };
   private unsubscribe: () => void = () => undefined;
 
@@ -107,7 +109,17 @@ export class Recorder {
     this.traceSince = this.now();
 
     const onEvent = (e: TimelineEvent) => { if (!this.replaying) this.segmenter.onEvent(e); };
-    const onNav = (f: unknown) => { if (!this.replaying && f === page.mainFrame()) this.segmenter.onNavigated(this.now()); };
+    const onNav = (f: unknown) => {
+      if (this.replaying || f !== page.mainFrame()) return;
+      const t = this.now();
+      this.segmenter.onNavigated(t);
+      // The stream clock re-anchors to ~0 after a navigation, so old-epoch frames would alias into
+      // new-page episodes: read the closed episodes' frames now, then empty the buffer.
+      for (const ep of this.segmenter.tick(t)) {
+        this.navClosed.push({ ep, frames: this.screencast?.framesBetween(ep.startTs, ep.endTs) ?? [] });
+      }
+      this.screencast?.dropBefore(Infinity);
+    };
     const onResponse = (r: Response) => {
       if (r.request().isNavigationRequest() && r.frame() === page.mainFrame()) this.documentStatus = r.status();
     };
@@ -137,7 +149,7 @@ export class Recorder {
 
   async awaitSettle(): Promise<Episode[]> {
     const deadline = Date.now() + this.opts.maxEpisodeMs + this.opts.settleMs + SETTLE_SLACK_MS;
-    const episodes = this.segmenter.tick(this.now());
+    const episodes = [...this.navClosed.map((n) => n.ep), ...this.segmenter.tick(this.now())];
     while (this.segmenter.isOpen && Date.now() < deadline) {
       await new Promise((r) => setTimeout(r, TICK_MS));
       episodes.push(...this.segmenter.tick(this.now()));
@@ -147,7 +159,7 @@ export class Recorder {
   }
 
   async stop(): Promise<{ kept: number; rejected: number; duplicates: number }> {
-    await this.processAll(this.segmenter.flush(this.now()));
+    await this.processAll([...this.navClosed.map((n) => n.ep), ...this.segmenter.flush(this.now())]);
     this.unsubscribe();
     await this.screencast?.stop();
     await this.frameTiming?.stopAndCollect().catch(() => undefined);
@@ -202,7 +214,9 @@ export class Recorder {
     if (episodes.length === 0 || !this.screencast) return;
     const screencast = this.screencast;
     // Frames are read up front: a reduced-motion replay drops the recorder's buffer.
-    const frames = episodes.map((ep) => screencast.framesBetween(ep.startTs, ep.endTs));
+    const stashed = new Map(this.navClosed.map((n) => [n.ep.id, n.frames]));
+    this.navClosed = [];
+    const frames = episodes.map((ep) => stashed.get(ep.id) ?? screencast.framesBetween(ep.startTs, ep.endTs));
     const window = await this.rotateTrace();
     let after: AfterState;
     try {

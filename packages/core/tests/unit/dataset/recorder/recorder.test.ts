@@ -10,14 +10,15 @@ import type { StructuralNode } from '../../../../src/types/structural.js';
 import type { SceneGraph, SceneNode } from '../../../../src/types/scene-graph.js';
 import type { Episode, Trigger } from '../../../../src/dataset/types.js';
 
-const fake = vi.hoisted(() => ({ frames: [] as unknown[], nodes: [] as unknown[] }));
+// liveBuffer: the mock screencast filters by ts and honors dropBefore, like the real buffer.
+const fake = vi.hoisted(() => ({ frames: [] as CapturedFrame[], nodes: [] as unknown[], liveBuffer: false }));
 
 vi.mock('../../../../src/dataset/capture/screencast-recorder.js', () => ({
   ScreencastRecorder: class {
     async start() {}
     async stop() {}
-    dropBefore() {}
-    framesBetween() { return fake.frames; }
+    dropBefore(ts: number) { if (fake.liveBuffer) fake.frames = fake.frames.filter((f) => f.ts >= ts); }
+    framesBetween(a: number, b: number) { return fake.liveBuffer ? fake.frames.filter((f) => f.ts >= a && f.ts <= b) : fake.frames; }
   },
 }));
 vi.mock('../../../../src/dataset/capture/frame-timing.js', async (orig) => ({
@@ -90,7 +91,7 @@ function fakeEngine(title: { value: string }) {
 }
 
 let dir: string;
-beforeEach(async () => { dir = await mkdtemp(join(tmpdir(), 'uipe-rec-')); fake.frames = await movingFrames(); });
+beforeEach(async () => { dir = await mkdtemp(join(tmpdir(), 'uipe-rec-')); fake.frames = await movingFrames(); fake.liveBuffer = false; });
 afterEach(async () => { await rm(dir, { recursive: true, force: true }); });
 
 async function setup(pageTitle = 'Home') {
@@ -111,7 +112,7 @@ async function setup(pageTitle = 'Home') {
     return rec.awaitSettle();
   };
   const records = async () => { await trace.flush(); return readTrace(tracePath); };
-  return { rec, store, siteMap, fire, records, title };
+  return { rec, store, siteMap, fire, records, title, engine, stream };
 }
 
 describe('Recorder', () => {
@@ -176,6 +177,51 @@ describe('Recorder', () => {
     await fire('t2', 'b2');
     expect(await store.listClips('r1')).toHaveLength(1);
     expect(await rec.stop()).toEqual({ kept: 1, rejected: 0, duplicates: 0 });
+  });
+});
+
+describe('Recorder navigation', () => {
+  it('frames_from_before_a_navigation_do_not_leak_into_later_episodes', async () => {
+    fake.nodes = [snode('dom-1', 'a1'), snode('dom-2', 'b2')];
+    fake.liveBuffer = true;
+    fake.frames = [];
+    const { rec, store, engine, stream } = await setup();
+    let anchor = T0;
+    stream.getNormalizer = () => ({ fromWallTimeMs: (w: number) => w - anchor, fromPerformanceNow: (p: number) => p, fromCdpMonotonicSeconds: (s: number) => s * 1000 });
+    const page = engine.runtime.getPage();
+    const shiftedFrames = async (boxBase: number) => {
+      const t = rec.now();
+      return Promise.all([0, 1, 2, 3, 4, 5].map(async (i) => ({ ...(await frame(i, boxBase + i * 20)), ts: t + i * 16 })));
+    };
+
+    // page A: episode t1 with frames buffered on the old clock epoch
+    await rec.beginTrigger({ id: 't1', kind: 'action', timestamp: 0, stateId: 's1', action: { type: 'click', x: 1, y: 1 } });
+    const t1Start = rec.now();
+    stream.emit('event', { type: 'animation-start', timestamp: rec.now(), payload: { animationId: 'a1', name: 'pop', duration: 50, iterations: 1, targetMarker: 'a1' } });
+    const oldFrames = await shiftedFrames(10);
+    fake.frames.push(...oldFrames);
+    await new Promise((r) => setTimeout(r, 100));
+    stream.emit('event', { type: 'animation-end', timestamp: rec.now(), payload: { animationId: 'a1' } });
+
+    // main-frame navigation; the stream clock re-anchors so new-epoch ts alias page A's
+    page.emit('framenavigated', null);
+    anchor = Date.now() - t1Start;
+
+    // page B: episode t2 whose window overlaps the stale frames' ts
+    await rec.beginTrigger({ id: 't2', kind: 'action', timestamp: 0, stateId: 's2', action: { type: 'click', x: 1, y: 1 } });
+    stream.emit('event', { type: 'animation-start', timestamp: rec.now(), payload: { animationId: 'b2', name: 'slide', duration: 80, iterations: 1, targetMarker: 'b2' } });
+    const newFrames = await shiftedFrames(30);
+    fake.frames.push(...newFrames);
+    await new Promise((r) => setTimeout(r, 100));
+    stream.emit('event', { type: 'animation-end', timestamp: rec.now(), payload: { animationId: 'b2' } });
+    const eps = await rec.awaitSettle();
+
+    expect(eps.map((e) => e.closeReason)).toEqual(['navigated', 'settled']);
+    const clips = await store.listClips('r1');
+    const byTrigger = (id: string) => clips.find((c) => c.occurrences.some((o) => o.triggerId === id) || c.episode.trigger.id === id)!;
+    expect(byTrigger('t1').files.frames).toHaveLength(oldFrames.length);
+    expect(byTrigger('t2').files.frames).toHaveLength(newFrames.length);
+    await rec.stop();
   });
 });
 
