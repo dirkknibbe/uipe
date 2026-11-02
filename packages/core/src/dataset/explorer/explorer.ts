@@ -23,6 +23,8 @@ export interface ExplorerDeps {
   trace: TraceWriter;
   engine: Engine;
   startUrl: string;
+  /** The allowed origin once the start page lands (canonicalised by the navigation guard); throws to abort. */
+  origin?: () => string;
   /** Injected in tests; defaults to a real timer. */
   sleep?: (ms: number) => Promise<void>;
 }
@@ -51,7 +53,7 @@ export function clipObservation(text: string, max = OBSERVATION_MAX): string {
 }
 
 export class Explorer {
-  private readonly startOrigin: string;
+  private readonly origin: () => string;
   private readonly sleep: (ms: number) => Promise<void>;
   private readonly visited = new Set<string>();
   private readonly history: ExplorerTurn['history'] = [];
@@ -60,7 +62,8 @@ export class Explorer {
   private observation = '';
 
   constructor(private readonly deps: ExplorerDeps) {
-    this.startOrigin = originOf(deps.startUrl);
+    const startOrigin = originOf(deps.startUrl);
+    this.origin = deps.origin ?? (() => startOrigin);
     this.sleep = deps.sleep ?? ((ms) => new Promise((r) => setTimeout(r, ms)));
   }
 
@@ -101,6 +104,7 @@ export class Explorer {
     const { recorder, tools, engine, startUrl } = this.deps;
     await recorder.beginTrigger(this.trigger('page-load', ''));
     await tools.call('navigate', { url: startUrl });
+    this.origin(); // a start URL that redirected off-site aborts the run here, before any model step
     await recorder.awaitSettle();
     const graph = await engine.captureGraph(false);
     const page = engine.runtime.getPage();
@@ -115,7 +119,7 @@ export class Explorer {
 
   private async execute(call: ExplorerCall, step: number): Promise<{ summary: string; finished: boolean }> {
     const target = await this.resolveTarget(call);
-    const verdict = checkRails(call, { startOrigin: this.startOrigin, targetLabel: target?.label, targetSubmit: target?.submit });
+    const verdict = checkRails(call, { startOrigin: this.origin(), targetLabel: target?.label, targetSubmit: target?.submit });
     if (!verdict.ok) {
       const detail = verdict.detail ? `${verdict.reason}: ${verdict.detail}` : verdict.reason;
       this.deps.trace.write({ type: 'tool-refused', step, tool: String(call.tool), detail });

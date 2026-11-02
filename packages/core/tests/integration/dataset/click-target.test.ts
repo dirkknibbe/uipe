@@ -5,7 +5,7 @@ import { resolveClickTarget } from '../../../src/dataset/explorer/click-target.j
 const HTML = `
 <style>body{margin:0} button,a,input{display:block;width:200px;height:40px;margin:0}</style>
 <button id="buy" aria-label=""><svg id="icon" width="20" height="20"><rect width="20" height="20"/></svg> Buy now</button>
-<form><input id="q"><button id="go">Go</button><input id="next" type="submit" value="Next"></form>
+<form><input id="q"><button id="go">Go</button><input id="next" type="submit" value="Next"><button id="odd" type="foo">Odd</button><input id="img" type="IMAGE" alt="Img"></form>
 <button id="plain">Open details</button>
 <a class="dup" href="#a">A</a><a class="dup" href="#b">B</a>`;
 
@@ -36,6 +36,8 @@ describe('resolveClickTarget (real Chromium)', () => {
   it('flags benign-labelled submit controls inside a form', async () => {
     expect(await resolveClickTarget(page, { type: 'clickSelector', selector: '#go' })).toEqual({ label: 'Go', submit: true });
     expect(await resolveClickTarget(page, { type: 'click', ...(await centre('#next')) })).toEqual({ label: 'Next', submit: true });
+    expect(await resolveClickTarget(page, { type: 'clickSelector', selector: '#odd' })).toEqual({ label: 'Odd', submit: true });
+    expect(await resolveClickTarget(page, { type: 'clickSelector', selector: '#img' })).toMatchObject({ submit: true });
     expect(await resolveClickTarget(page, { type: 'clickSelector', selector: '#plain' })).toEqual({ label: 'Open details', submit: false });
   });
 

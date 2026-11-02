@@ -28,22 +28,70 @@ const errMessage = (e: unknown) => (e instanceof Error ? e.message : String(e));
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
 /**
+ * The allowed origin after the start page lands: the start origin, or the landed one when the first load
+ * redirected within the same site (same scheme and port, hosts equal once one leading 'www.' is dropped).
+ * null means the start URL took the run to another site.
+ */
+export function canonicalStartOrigin(startOrigin: string, landedUrl: string): string | null {
+  const a = new URL(startOrigin);
+  const b = new URL(landedUrl);
+  const site = (host: string) => host.replace(/^www\./, '');
+  if (a.origin === b.origin) return a.origin;
+  return a.protocol === b.protocol && a.port === b.port && site(a.hostname) === site(b.hostname) ? b.origin : null;
+}
+
+export class StartRedirectedOffSite extends Error {
+  constructor(landed: string) { super(`start URL redirected off-site to ${landed}; run aborted`); }
+}
+
+export interface NavigationGuard {
+  /** The allowed origin, canonicalised on the first load; throws StartRedirectedOffSite if that load left the site. */
+  origin(): string;
+}
+
+/**
  * Spec 5.1 keeps the run on the start origin. Routed on the context so popups are covered too:
  * popup pages are closed and their navigations aborted; main-frame navigations leave only for the
- * start origin's robots-allowed paths, at most one per NAV_INTERVAL_MS. Subframes and subresources pass.
- * ponytail: server redirects are not re-routed by Playwright, so a same-origin URL that 30x's
- * off-origin still lands; add a framenavigated origin check if that shows up in traces.
+ * allowed origin's robots-allowed paths, at most one per NAV_INTERVAL_MS. Subframes and subresources pass.
+ * Playwright does not re-route server redirects, so a main-frame commit off-origin (a same-origin URL
+ * that 30x's away) is refused after the fact and the page sent back to the last on-origin URL.
+ * ponytail: the redirect target's GET has already been sent by then, and the explorer can observe the
+ * off-origin page for the moment before the bounce; route.fetch({maxRedirects:0}) if that matters.
  */
-export async function guardNavigations(page: Page, trace: TraceWriter, seed: { origin: string; robots: Robots }): Promise<void> {
+export async function guardNavigations(page: Page, trace: TraceWriter, seed: { origin: string; robots: Robots }): Promise<NavigationGuard> {
   const context = page.context();
   const refuse = (detail: string) => trace.write({ type: 'tool-refused', step: 0, tool: 'navigate', detail });
   // A 204 answer keeps the current document; abort() would commit a chrome-error page instead.
   const stay = (route: Route) => route.fulfill({ status: 204 }).catch(() => undefined);
+  let origin = seed.origin;
+  let lastOnOrigin: string | undefined;
+  let offSite: string | undefined;
   let nextSlot = 0;
   context.on('page', (popup) => {
     if (popup === page) return;
     refuse('popup page closed');
     void popup.close().catch(() => undefined);
+  });
+  page.on('framenavigated', (frame) => {
+    if (frame !== page.mainFrame() || offSite) return;
+    const url = frame.url();
+    if (!/^https?:/.test(url)) return;
+    if (!lastOnOrigin) {
+      const canonical = canonicalStartOrigin(origin, url);
+      if (!canonical) {
+        offSite = new URL(url).origin;
+        refuse(`start URL redirected off-site to ${offSite}`);
+        void page.goto('about:blank').catch(() => undefined);
+        return;
+      }
+      origin = canonical;
+    }
+    if (new URL(url).origin === origin) {
+      lastOnOrigin = url;
+      return;
+    }
+    refuse(`off-origin redirect ${new URL(url).origin}`);
+    void page.goto(lastOnOrigin ?? 'about:blank').catch(() => undefined);
   });
   await context.route('**/*', async (route) => {
     const req = route.request();
@@ -57,7 +105,11 @@ export async function guardNavigations(page: Page, trace: TraceWriter, seed: { o
     if (frame.page() !== page) return route.abort('blockedbyclient').catch(() => undefined);
     if (frame !== page.mainFrame()) return route.continue();
     const url = new URL(req.url());
-    if (url.origin !== seed.origin) {
+    if (offSite) {
+      refuse(`navigation after off-site start ${url.origin}`);
+      return stay(route);
+    }
+    if (url.origin !== origin) {
       refuse(`off-origin navigation ${url.origin}`);
       return stay(route);
     }
@@ -70,6 +122,12 @@ export async function guardNavigations(page: Page, trace: TraceWriter, seed: { o
     if (at > Date.now()) await sleep(at - Date.now());
     return route.continue().catch(() => undefined);
   });
+  return {
+    origin: () => {
+      if (offSite) throw new StartRedirectedOffSite(offSite);
+      return origin;
+    },
+  };
 }
 
 function stoppable(model: ExplorerModel, signal?: AbortSignal): ExplorerModel {
@@ -111,7 +169,7 @@ export async function runSite(opts: RunSiteOptions): Promise<{ runId: string; re
     await engine.ensureLaunched();
     const page = engine.runtime.getPage();
     await page.context().setExtraHTTPHeaders({ 'User-Agent': userAgent });
-    await guardNavigations(page, trace, { origin: start.origin, robots });
+    const guard = await guardNavigations(page, trace, { origin: start.origin, robots });
 
     const siteMap = new SiteMap(start.hostname, opts.startUrl);
     const budget = new RunBudget({ ...DEFAULT_CAPS, ...opts.caps });
@@ -119,7 +177,7 @@ export async function runSite(opts: RunSiteOptions): Promise<{ runId: string; re
     await recorder.start();
     try {
       const model = stoppable(opts.model ?? new AnthropicExplorerModel(), opts.signal);
-      const explorer = new Explorer({ model, tools, recorder, siteMap, budget, trace, engine, startUrl: opts.startUrl });
+      const explorer = new Explorer({ model, tools, recorder, siteMap, budget, trace, engine, startUrl: opts.startUrl, origin: guard.origin });
       stop = (await explorer.run()).stopReason;
       if (stop === 'bot-challenge') {
         trace.write({ type: 'clip-rejected', step: 0, episodeId: 'start-page', reason: 'bot-challenge', detail: 'start page is a bot challenge; no retry' });

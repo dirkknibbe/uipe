@@ -13,11 +13,13 @@ const CLICKABLE =
  */
 function describeClickTarget(leaf: Element, args: { clickable: string; max: number }): ClickTarget {
   const el = leaf.closest(args.clickable) ?? leaf;
-  const type = (el.getAttribute('type') ?? '').toLowerCase();
+  // The resolved .type, not the attribute: type="foo" on a button is still a submit button.
+  const type = (el as HTMLInputElement).type;
   const tag = el.tagName;
   const inForm = !!(el as HTMLButtonElement).form;
+  // A formless button with no type attribute cannot submit; every other resolved submit is flagged.
   const submit = (tag === 'INPUT' && (type === 'submit' || type === 'image'))
-    || (tag === 'BUTTON' && (type === 'submit' || (type === '' && inForm)));
+    || (tag === 'BUTTON' && type === 'submit' && (inForm || el.hasAttribute('type')));
   const parts = [
     el.getAttribute('aria-label'), (el as HTMLElement).innerText, tag === 'INPUT' ? (el as HTMLInputElement).value : '',
     el.getAttribute('alt'), el.getAttribute('title'),

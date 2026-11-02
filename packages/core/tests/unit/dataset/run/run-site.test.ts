@@ -18,7 +18,7 @@ vi.mock('../../../../src/mcp/server.js', () => ({
     server: {},
     engine: {
       ensureLaunched: async () => { h.launches++; },
-      runtime: { close: h.close, getPage: () => ({ context: () => ({ setExtraHTTPHeaders: h.setHeaders, route: vi.fn(async () => undefined), on: vi.fn() }) }) },
+      runtime: { close: h.close, getPage: () => ({ on: vi.fn(), mainFrame: vi.fn(), context: () => ({ setExtraHTTPHeaders: h.setHeaders, route: vi.fn(async () => undefined), on: vi.fn() }) }) },
     },
   }),
 }));
@@ -29,7 +29,7 @@ vi.mock('../../../../src/dataset/crawl/robots.js', () => ({
   fetchRobots: async () => ({ status: 'ok', allowed: () => h.robotsAllowed }),
 }));
 
-import { runSite, ContactUrlRequired, guardNavigations } from '../../../../src/dataset/run/run-site.js';
+import { runSite, ContactUrlRequired, guardNavigations, canonicalStartOrigin } from '../../../../src/dataset/run/run-site.js';
 
 const model = { next: vi.fn() };
 async function setup() {
@@ -85,12 +85,29 @@ describe('runSite', () => {
   });
 });
 
+describe('canonicalStartOrigin', () => {
+  it('keeps_the_origin_when_the_start_page_lands_where_it_started', () => {
+    expect(canonicalStartOrigin('https://a.test', 'https://a.test/home')).toBe('https://a.test');
+  });
+  it('adopts_a_www_or_apex_landing_on_the_same_site', () => {
+    expect(canonicalStartOrigin('https://a.test', 'https://www.a.test/')).toBe('https://www.a.test');
+    expect(canonicalStartOrigin('https://www.a.test', 'https://a.test/x')).toBe('https://a.test');
+  });
+  it('rejects_another_site_scheme_port_or_subdomain', () => {
+    expect(canonicalStartOrigin('https://a.test', 'https://b.test/')).toBeNull();
+    expect(canonicalStartOrigin('https://a.test', 'http://www.a.test/')).toBeNull();
+    expect(canonicalStartOrigin('https://a.test', 'https://a.test:8443/')).toBeNull();
+    expect(canonicalStartOrigin('https://a.test', 'https://shop.a.test/')).toBeNull();
+    expect(canonicalStartOrigin('https://a.test', 'https://www.www.a.test/')).toBeNull();
+  });
+});
+
 describe('guardNavigations', () => {
   async function harness() {
     let handler: any;
     let onPage: any;
     const main: any = {};
-    const page: any = { mainFrame: () => main };
+    const page: any = { mainFrame: () => main, on: () => undefined };
     page.context = () => ({ route: async (_: string, h: any) => { handler = h; }, on: (_: string, h: any) => { onPage = h; } });
     main.page = () => page;
     const written: any[] = [];

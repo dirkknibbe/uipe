@@ -15,7 +15,7 @@ const node = (id: string, fields: Partial<SceneNode>, box = { x: 0, y: 0, width:
   zLayer: 0, interactionType: 'clickable', isDisabled: false, isLoading: false, isFocused: false, visualState: 'normal', children: [],
 } as unknown as SceneNode);
 
-function harness(script: ExplorerCall[], opts: { caps?: Partial<BudgetCaps>; tokens?: [number, number]; nodes?: SceneNode[]; target?: { label: string; submit: boolean } | null } = {}) {
+function harness(script: ExplorerCall[], opts: { caps?: Partial<BudgetCaps>; tokens?: [number, number]; nodes?: SceneNode[]; target?: { label: string; submit: boolean } | null; origin?: () => string } = {}) {
   let url = START;
   const records: TraceInput[] = [];
   const triggers: Trigger[] = [];
@@ -61,7 +61,7 @@ function harness(script: ExplorerCall[], opts: { caps?: Partial<BudgetCaps>; tok
   const explorer = new Explorer({
     model, tools: tools as never, recorder: recorder as never, siteMap: new SiteMap('site.test', START), budget,
     trace: { write: (r: TraceInput) => { records.push(r); return `t${records.length}`; } } as never,
-    engine: engine as never, startUrl: START, sleep: async () => undefined,
+    engine: engine as never, startUrl: START, sleep: async () => undefined, ...(opts.origin ? { origin: opts.origin } : {}),
   });
   return { explorer, records, triggers, scrolls, turns, tools, budget };
 }
@@ -70,6 +70,21 @@ const act = (args: Record<string, unknown>, rationale = 'r'): ExplorerCall => ({
 const done: ExplorerCall = { tool: 'done', args: {}, rationale: 'finished' };
 
 describe('Explorer', () => {
+  it('uses_the_guard_origin_for_rails_so_a_canonicalised_www_start_is_navigable', async () => {
+    const www = `https://www.${new URL(START).host}`;
+    const h = harness([{ tool: 'navigate', args: { url: `${www}/about` }, rationale: 'r' }, done], { origin: () => www });
+    await h.explorer.run();
+    expect(h.records.some((r) => r.type === 'tool-refused')).toBe(false);
+    expect(h.tools.call.mock.calls.some(([n, a]) => n === 'navigate' && a.url === `${www}/about`)).toBe(true);
+  });
+
+  it('aborts_with_a_clear_error_before_any_model_step_when_the_guard_origin_throws', async () => {
+    const h = harness([done], { origin: () => { throw new Error('start URL redirected off-site to https://b.test; run aborted'); } });
+    expect((await h.explorer.run()).stopReason).toBe('error');
+    expect(h.records).toContainEqual(expect.objectContaining({ type: 'error', message: expect.stringContaining('redirected off-site') }));
+    expect(h.turns).toHaveLength(0);
+  });
+
   it('refuses_off_rail_tool_calls_and_counts_step', async () => {
     const h = harness([
       { tool: 'navigate', args: { url: 'https://evil.test/' }, rationale: 'r' },
