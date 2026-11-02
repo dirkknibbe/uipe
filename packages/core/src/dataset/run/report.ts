@@ -14,7 +14,7 @@ export interface RunReport {
   uniqueEpisodes: number; states: number; transitions: number; capsHit: string[];
   usd: number; usdPerKeptClip: number | null;
   duplicateRate: number;
-  junkRateEstimate: null;
+  junkRateEstimate: number | null;
   passes: { minUniqueEpisodes: boolean; maxDuplicateRate: boolean };
 }
 
