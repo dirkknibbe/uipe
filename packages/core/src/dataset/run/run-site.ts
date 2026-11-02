@@ -61,7 +61,9 @@ export interface NavigationGuard {
  * Playwright does not route redirect hops (checked in real Chromium: a 3xx fulfilled from route.fetch is
  * followed without re-entering the route), so a main-frame commit off-origin (a same-origin URL that 30x's
  * away) is refused after the fact: the page goes back to the last on-origin URL, outside the rate slot.
- * After MAX_OFF_ORIGIN_REDIRECTS such commits the run stops: about:blank, every navigation refused, origin() throws.
+ * Off-origin redirect hops are counted from 'request' events (which do see hops), committed or not (a foreign hop
+ * that redirects back or answers 204 never commits). After MAX_OFF_ORIGIN_REDIRECTS foreign hops the run stops:
+ * about:blank, every navigation refused, origin() throws.
  * ponytail: each bounced redirect still sends its target one request; the Explorer and Recorder skip the
  * off-origin page. Pre-commit refusal needs every document fetched outside the browser (route.fetch), which
  * changes the crawler's network fingerprint.
@@ -74,13 +76,31 @@ export async function guardNavigations(page: Page, trace: TraceWriter, seed: { o
   let origin = seed.origin;
   let lastOnOrigin: string | undefined;
   let stopped: Error | undefined;
-  let offOriginCommits = 0;
+  let offOriginHops = 0;
+  let countedHop: string | undefined; // the last counted hop, so its commit is not counted again
   let bounceTo: string | undefined; // the bounce's own request skips the rate slot
   let nextSlot = 0;
   const halt = (e: Error) => {
     stopped = e;
     void page.goto('about:blank').catch(() => undefined);
   };
+  /** Counts one foreign request; true once the cap halted the run. */
+  const countOffOrigin = () => {
+    if (++offOriginHops < MAX_OFF_ORIGIN_REDIRECTS) return false;
+    const e = new OffOriginRedirectCap();
+    trace.write({ type: 'error', step: 0, message: `guard: ${e.message}` });
+    halt(e);
+    return true;
+  };
+  page.on('request', (req) => {
+    if (stopped || !req.redirectedFrom() || !req.isNavigationRequest() || req.frame() !== page.mainFrame()) return;
+    const url = req.url();
+    const allowed = lastOnOrigin ? new URL(url).origin === origin : canonicalStartOrigin(origin, url) !== null;
+    if (allowed) return;
+    refuse(`off-origin redirect hop ${new URL(url).origin}`);
+    countedHop = url.split('#')[0];
+    countOffOrigin();
+  });
   context.on('page', (popup) => {
     if (popup === page) return;
     refuse('popup page closed');
@@ -105,15 +125,13 @@ export async function guardNavigations(page: Page, trace: TraceWriter, seed: { o
       return;
     }
     refuse(`off-origin redirect ${new URL(url).origin}`);
-    if (++offOriginCommits >= MAX_OFF_ORIGIN_REDIRECTS) {
-      const e = new OffOriginRedirectCap();
-      trace.write({ type: 'error', step: 0, message: `guard: ${e.message}` });
-      halt(e);
-      return;
-    }
+    const counted = url.split('#')[0] === countedHop;
+    countedHop = undefined;
+    if (!counted && countOffOrigin()) return;
     const back = lastOnOrigin ?? 'about:blank'; // always set here: the first commit is on-origin or halts
-    bounceTo = back.split('#')[0];
-    void page.goto(back).catch(() => undefined);
+    const target = back.split('#')[0];
+    bounceTo = target;
+    void page.goto(back).catch(() => undefined).finally(() => { if (bounceTo === target) bounceTo = undefined; });
   });
   await context.route('**/*', async (route) => {
     const req = route.request();

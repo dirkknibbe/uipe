@@ -159,6 +159,10 @@ export class Recorder {
     let before: Snapshot | undefined;
     try {
       before = await this.snapshot();
+      if (this.offOrigin(before.graph.url)) {
+        this.traceError(`before-state on off-origin page ${originOf(before.graph.url)}: dropped`);
+        before = undefined;
+      }
     } catch (e) {
       this.traceError(`before-state capture failed: ${errMessage(e)}`);
     }

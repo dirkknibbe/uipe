@@ -106,8 +106,13 @@ describe('guardNavigations', () => {
   async function harness() {
     let handler: any;
     let onPage: any;
-    const main: any = {};
-    const page: any = { mainFrame: () => main, on: () => undefined };
+    const pageHandlers: Record<string, (x: any) => void> = {};
+    const main: any = { url: () => 'https://a.test/' };
+    const gotos: { url: string; settle: (ok: boolean) => void }[] = [];
+    const page: any = {
+      mainFrame: () => main, on: (ev: string, h: any) => { pageHandlers[ev] = h; },
+      goto: (url: string) => new Promise((res, rej) => gotos.push({ url, settle: (ok) => (ok ? res(null) : rej(new Error('aborted'))) })),
+    };
     page.context = () => ({ route: async (_: string, h: any) => { handler = h; }, on: (_: string, h: any) => { onPage = h; } });
     main.page = () => page;
     const written: any[] = [];
@@ -118,7 +123,8 @@ describe('guardNavigations', () => {
       await handler(route);
       return route;
     };
-    return { nav, written, page, popup: (p: any) => onPage(p) };
+    const commit = (url: string) => { main.url = () => url; pageHandlers.framenavigated(main); };
+    return { nav, written, page, popup: (p: any) => onPage(p), commit, gotos };
   }
 
   it('aborts_later_same_origin_navigation_into_disallowed_path_and_traces_it', async () => {
@@ -149,6 +155,19 @@ describe('guardNavigations', () => {
     popup(other);
     expect(other.close).toHaveBeenCalled();
     expect(written.at(-1)).toMatchObject({ type: 'tool-refused', detail: 'popup page closed' });
+  });
+
+  it('a_superseded_bounce_no_longer_skips_the_rate_slot_once_its_goto_settles', async () => {
+    const { nav, commit, gotos } = await harness();
+    commit('https://a.test/home');
+    commit('https://b.test/away'); // bounced: goto(https://a.test/home)
+    expect(gotos.map((g) => g.url)).toEqual(['https://a.test/home']);
+    gotos[0].settle(false); // superseded before its request reached the route
+    await new Promise((r) => setTimeout(r, 0));
+    await nav('https://a.test/other'); // takes the slot
+    const t0 = Date.now();
+    await nav('https://a.test/home');
+    expect(Date.now() - t0).toBeGreaterThanOrEqual(1_500);
   });
 
   it('subframe_navigations_skip_the_check', async () => {

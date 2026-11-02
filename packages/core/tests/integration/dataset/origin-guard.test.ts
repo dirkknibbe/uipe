@@ -16,6 +16,7 @@ let browser: Browser;
 let page: Page;
 let trace: TraceWriter;
 const redirects: Record<string, string> = {};
+const otherRedirects: Record<string, string> = {};
 const guardFor = (p: Page, name: string, origin = new URL(home.baseUrl).origin) => {
   const t = new TraceWriter(join(dir, `${name}.jsonl`), 'r', 'h');
   return guardNavigations(p, t, { origin, robots: { status: 'ok', allowed: () => true } }).then((guard) => ({ guard, trace: t }));
@@ -23,10 +24,17 @@ const guardFor = (p: Page, name: string, origin = new URL(home.baseUrl).origin) 
 
 beforeAll(async () => {
   dir = await mkdtemp(join(tmpdir(), 'uipe-guard-'));
-  other = await startFixtureServer(dir); // another port is another origin
+  other = await startFixtureServer(dir, otherRedirects, { '/nc': 204 }); // another port is another origin
   home = await startFixtureServer(dir, redirects);
   const port = new URL(home.baseUrl).port;
-  Object.assign(redirects, { '/bounce': `${other.baseUrl}/index.html`, '/apex': `http://www.localhost:${port}/index.html` });
+  Object.assign(redirects, {
+    '/bounce': `${other.baseUrl}/index.html`, '/apex': `http://www.localhost:${port}/index.html`,
+    '/chain': `${other.baseUrl}/hop`, '/to204': `${other.baseUrl}/nc`,
+  });
+  otherRedirects['/hop'] = `${home.baseUrl}/chain.html`;
+  // Foreign hops that never commit off-origin: same -> foreign -> same, and same -> foreign 204.
+  await writeFile(join(dir, 'chain.html'), `<script>location.href = '/chain';</script>`);
+  await writeFile(join(dir, 'nc.html'), `<script>setInterval(() => { location.href = '/to204'; }, 2100);</script>`);
   // An on-origin page that keeps navigating to a URL that 302s off-origin: an endless bounce without a cap.
   await writeFile(join(dir, 'auto.html'), `<script>location.href = '/bounce';</script>`);
   await writeFile(join(dir, 'index.html'), `<a id="off" ${LINK_STYLE} href="${other.baseUrl}/index.html">off</a>
@@ -88,6 +96,22 @@ describe('guardNavigations (real Chromium)', () => {
     expect((await readTrace(join(dir, 'loop.jsonl'))).some((r) => r.type === 'error' && /redirect cap/.test(r.message))).toBe(true);
     await fresh.context().close();
   });
+
+  for (const [name, start, foreignPath] of [['same->foreign->same 302 chain', 'chain.html', '/hop'], ['same->foreign 204', 'nc.html', '/nc']]) {
+    it(`a page-JS loop through a ${name} sends the foreign server at most 3 requests, then the run stops`, async () => {
+      const fresh = await browser.newPage();
+      const { guard, trace: t } = await guardFor(fresh, `hop-${start}`);
+      const before = other.requests.filter((r) => r === foreignPath).length;
+      await fresh.goto(`${home.baseUrl}/${start}`).catch(() => undefined);
+      await expect.poll(() => { try { guard.origin(); return 'ok'; } catch (e) { return (e as Error).message; } }, { timeout: 20_000 })
+        .toMatch(/redirect cap/);
+      await fresh.waitForTimeout(2_500);
+      expect(other.requests.filter((r) => r === foreignPath).length - before).toBeLessThanOrEqual(3);
+      await t.flush();
+      expect((await readTrace(join(dir, `hop-${start}.jsonl`))).some((r) => r.type === 'error' && /redirect cap/.test(r.message))).toBe(true);
+      await fresh.context().close();
+    }, 30_000);
+  }
 
   it('an apex start URL that redirects to www canonicalises the origin and later www navigations are allowed', async () => {
     const fresh = await browser.newPage();

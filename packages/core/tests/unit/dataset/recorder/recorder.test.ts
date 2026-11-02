@@ -318,6 +318,22 @@ describe('Recorder origin', () => {
     const clips = await store.listClips('r1');
     expect(clips.flatMap((c) => c.episode.animations.map((a) => a.animationId))).not.toContain('a1');
   });
+  it('does_not_keep_a_before_state_snapshotted_on_an_off_origin_page', async () => {
+    fake.nodes = [snode('dom-1', 'a1')];
+    const { rec, store, records, stream } = await setup('Home', undefined, () => 'https://x.test');
+    pageUrl.value = 'https://evil.test/';
+    await rec.beginTrigger({ id: 't1', kind: 'action', timestamp: 0, stateId: 's1', action: { type: 'click', x: 1, y: 1 } });
+    pageUrl.value = 'https://x.test/';
+    stream.emit('event', { type: 'animation-start', timestamp: rec.now(), payload: { animationId: 'a1', name: 'pop', duration: 50, iterations: 1, targetMarker: 'a1' } });
+    await new Promise((r) => setTimeout(r, 20));
+    stream.emit('event', { type: 'animation-end', timestamp: rec.now(), payload: { animationId: 'a1' } });
+    await rec.awaitSettle();
+    const [clip] = await store.listClips('r1');
+    const before = JSON.parse(await readFile(join(store.runDir('r1'), 'clips', clip.id, clip.files.beforeScene), 'utf8'));
+    expect(before.url).toBe('https://x.test/');
+    expect((await records()).some((r) => r.type === 'error' && /before-state.*off-origin/.test(r.message))).toBe(true);
+    await rec.stop();
+  });
 });
 
 describe('classifyKind', () => {
