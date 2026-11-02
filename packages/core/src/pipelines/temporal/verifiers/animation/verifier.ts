@@ -126,6 +126,7 @@ function toPropertyPredictions(state: Record<string, number>): PropertyPredictio
 
 export class AnimationVerifier {
   private pending = new Map<string, PendingPrediction>();
+  private resolveChain: Promise<unknown> = Promise.resolve();
 
   async captureStart(
     cdp: CDPSession,
@@ -145,32 +146,9 @@ export class AnimationVerifier {
       return this.skipped(a.id, 'zero-duration', expectedEndTimestamp);
     }
 
-    let objectId: string;
-    try {
-      const resolved: any = await cdp.send('Animation.resolveAnimation' as any, { animationId: a.id } as any);
-      objectId = resolved?.remoteObject?.objectId;
-      if (!objectId) {
-        return this.skipped(a.id, 'resolve-failed', expectedEndTimestamp);
-      }
-    } catch {
-      return this.skipped(a.id, 'resolve-failed', expectedEndTimestamp);
-    }
-
-    let captured: CapturedFromPage;
-    try {
-      const res: any = await cdp.send('Runtime.callFunctionOn' as any, {
-        objectId,
-        functionDeclaration: READ_AT_START_SCRIPT,
-        arguments: [{ value: a.id }],
-        returnByValue: true,
-      } as any);
-      captured = res?.result?.value as CapturedFromPage;
-      if (!captured) {
-        return this.skipped(a.id, 'resolve-failed', expectedEndTimestamp);
-      }
-    } catch {
-      return this.skipped(a.id, 'resolve-failed', expectedEndTimestamp);
-    }
+    const read = await this.readAtStart(cdp, a.id);
+    if (!read) return this.skipped(a.id, 'resolve-failed', expectedEndTimestamp);
+    const { objectId, captured } = read;
     onTarget?.({ selector: captured.selector, tag: captured.tag, marker: captured.marker });
 
     if (!captured.bbox) {
@@ -244,6 +222,32 @@ export class AnimationVerifier {
 
   hasPending(animationId: string): boolean {
     return this.pending.has(animationId);
+  }
+
+  /**
+   * Resolve + read, one at a time: Chromium releases the previous resolveAnimation object when the
+   * next resolve lands, so interleaved pairs from a staggered group lose all but the last target.
+   */
+  private readAtStart(cdp: CDPSession, animationId: string): Promise<{ objectId: string; captured: CapturedFromPage } | null> {
+    const run = this.resolveChain.then(async () => {
+      try {
+        const resolved: any = await cdp.send('Animation.resolveAnimation' as any, { animationId } as any);
+        const objectId: string | undefined = resolved?.remoteObject?.objectId;
+        if (!objectId) return null;
+        const res: any = await cdp.send('Runtime.callFunctionOn' as any, {
+          objectId,
+          functionDeclaration: READ_AT_START_SCRIPT,
+          arguments: [{ value: animationId }],
+          returnByValue: true,
+        } as any);
+        const captured = res?.result?.value as CapturedFromPage | undefined;
+        return captured ? { objectId, captured } : null;
+      } catch {
+        return null;
+      }
+    });
+    this.resolveChain = run.then(() => undefined);
+    return run;
   }
 
   private skipped(

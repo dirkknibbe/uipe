@@ -18,6 +18,8 @@ interface Open {
   passive: boolean;
   startTs: number;
   animations: EpisodeAnimation[];
+  /** start payloads by animation id: the collector fills the target into them after the event */
+  payloads: Map<string, AnimationStartPayload>;
   /** finite animations still running (waiting for animation-end) */
   running: Set<string>;
   /** last moment anything was moving: events, ends, infinite-loop cycle ends */
@@ -25,6 +27,9 @@ interface Open {
   ambientLoop: boolean;
   sawMotion: boolean;
 }
+
+// Other event types (network, input) are stamped on other clocks and say nothing about motion.
+const SEGMENTED = new Set<TimelineEvent['type']>(['animation-start', 'animation-end', 'mutation', 'optical-flow-motion']);
 
 /** Pure state machine: callers feed triggers/events and poll tick() with a clock. */
 export class Segmenter {
@@ -45,6 +50,7 @@ export class Segmenter {
   }
 
   onEvent(e: TimelineEvent): void {
+    if (!SEGMENTED.has(e.type)) return;
     this.advance(e.timestamp);
     if (e.type === 'animation-start') {
       const p = e.payload as AnimationStartPayload;
@@ -110,6 +116,7 @@ export class Segmenter {
       passive,
       startTs: ts - this.opts.preRollMs,
       animations: [],
+      payloads: new Map(),
       running: new Set(),
       lastActiveTs: ts,
       ambientLoop: false,
@@ -120,6 +127,7 @@ export class Segmenter {
   private addAnimation(o: Open, p: AnimationStartPayload, ts: number): void {
     const delay = p.delay ?? 0;
     const iterations = p.iterations ?? 1;
+    o.payloads.set(p.animationId, p);
     o.animations.push({
       animationId: p.animationId,
       name: p.name,
@@ -152,7 +160,10 @@ export class Segmenter {
       startTs: o.startTs,
       endTs,
       closeReason: reason,
-      animations: o.animations,
+      animations: o.animations.map((a) => {
+        const p = o.payloads.get(a.animationId);
+        return { ...a, targetMarker: a.targetMarker ?? p?.targetMarker, targetTag: a.targetTag ?? p?.targetTag };
+      }),
       passive: o.passive,
       ambientLoop: o.ambientLoop,
       motionOnly: o.animations.length === 0 && o.sawMotion,

@@ -24,6 +24,31 @@ describe('Segmenter', () => {
     expect(eps[0].trigger.id).toBe('t1');
   });
 
+  it('picks_up_a_target_marker_filled_into_the_start_payload_after_the_event', () => {
+    // The animation collector pushes the start event first and fills target fields in place later.
+    const s = new Segmenter();
+    s.onTrigger(trig(0));
+    const e = start('a', 10);
+    s.onEvent(e);
+    Object.assign(e.payload as object, { targetMarker: 'm-a', targetTag: 'div' });
+    s.onEvent(end('a', 210));
+    const [ep] = s.tick(600);
+    expect(ep.animations[0]).toMatchObject({ targetMarker: 'm-a', targetTag: 'div' });
+  });
+
+  it('ignores_event_types_it_does_not_segment_on_and_their_clocks', () => {
+    // Network events carry CDP monotonic timestamps on another clock; they must not close episodes.
+    const s = new Segmenter();
+    s.onTrigger(trig(1000));
+    s.onEvent({ id: 'n1', type: 'network-response', timestamp: 9e9, payload: {} } as unknown as TimelineEvent);
+    s.onEvent(start('a', 1010));
+    s.onEvent(end('a', 1210));
+    const eps = s.tick(1600);
+    expect(eps).toHaveLength(1);
+    expect(eps[0]).toMatchObject({ closeReason: 'settled', passive: false });
+    expect(eps[0].animations).toHaveLength(1);
+  });
+
   it('closes_after_settle_window', () => {
     const s = new Segmenter();
     s.onTrigger(trig(0));

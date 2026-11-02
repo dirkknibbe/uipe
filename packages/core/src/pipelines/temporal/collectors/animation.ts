@@ -5,6 +5,8 @@ import { AnimationVerifier } from '../verifiers/animation/verifier.js';
 
 let nextId = 0;
 
+const reportKey = (id: string, name: string | undefined) => `${id}|${name ?? ''}`;
+
 interface AnimationStartState {
   startTimestamp: number;
   wallTimeAtStart: number;
@@ -17,22 +19,42 @@ export class AnimationCollector implements Collector {
   private cdp: CDPSession | undefined;
   private active = new Map<string, AnimationStartState>();
   private verifier = new AnimationVerifier();
+  /**
+   * Starts pushed by this session and the one before it. The stream re-attaches collectors on every
+   * navigation, and Animation.enable replays every animation that already exists (same id), so a
+   * start the previous session reported must not be pushed twice.
+   */
+  private reported = new Map<string, AnimationStartPayload>();
+  private reportedBefore = new Map<string, AnimationStartPayload>();
 
   async attach(page: Page, stream: TemporalEventStream): Promise<void> {
-    const normalizer = stream.getNormalizer();
-    if (!normalizer) {
+    const attachNormalizer = stream.getNormalizer();
+    if (!attachNormalizer) {
       console.warn('AnimationCollector: stream not attached, skipping');
       return;
     }
 
+    this.reportedBefore = this.reported;
+    this.reported = new Map();
     try {
       this.cdp = await page.context().newCDPSession(page);
-      await this.cdp.send('Animation.enable');
 
       this.cdp.on('Animation.animationStarted', async (params: any) => {
+        // The stream re-anchors its clock on navigation; stamp with the clock in force now.
+        const normalizer = stream.getNormalizer() ?? attachNormalizer;
         const a = params.animation;
+        const key = reportKey(a.id, a.name);
+        const already = this.reportedBefore.get(key);
+        if (already) {
+          this.reportedBefore.delete(key);
+          this.reported.set(key, already);
+          // The old session may have closed before reading the target; this one can.
+          if (!already.targetMarker && this.cdp) await this.fillTarget(this.cdp, params, already);
+          return;
+        }
+        // CDP startTime is page-clock milliseconds, not seconds.
         const startTimestamp = a.startTime !== undefined
-          ? normalizer.fromCdpMonotonicSeconds(a.startTime)
+          ? normalizer.fromCdpMonotonicSeconds(a.startTime / 1000)
           : normalizer.fromPerformanceNow(performance.now());
         const duration = a.source?.duration ?? 0;
         const iterations: number = a.source?.iterations ?? Infinity;
@@ -57,6 +79,7 @@ export class AnimationCollector implements Collector {
           delay,
           endDelay,
         };
+        this.reported.set(key, startPayload);
         stream.push({
           id: `anim-start-${++nextId}`,
           type: 'animation-start',
@@ -135,7 +158,7 @@ export class AnimationCollector implements Collector {
           timestamp = state.startTimestamp + elapsed;
           this.active.delete(id);
         } else {
-          timestamp = normalizer.fromWallTimeMs(Date.now());
+          timestamp = (stream.getNormalizer() ?? attachNormalizer).fromWallTimeMs(Date.now());
         }
 
         this.verifier.discard(id);
@@ -150,16 +173,29 @@ export class AnimationCollector implements Collector {
           },
         });
       });
+      // Enabled only once the listeners are on: enable replays existing animations before its reply.
+      await this.cdp.send('Animation.enable');
     } catch (err) {
       console.warn(`AnimationCollector: attach failed (${(err as Error).message})`);
     }
   }
 
+  private async fillTarget(cdp: CDPSession, params: any, payload: AnimationStartPayload): Promise<void> {
+    try {
+      await this.verifier.captureStart(cdp, params, (t) => {
+        if (t.selector) payload.target = t.selector;
+        if (t.tag) payload.targetTag = t.tag;
+        if (t.marker) payload.targetMarker = t.marker;
+      });
+    } catch { /* target stays unknown */ }
+    this.verifier.discard(params.animation.id);
+  }
+
+  /**
+   * The stream detaches and re-attaches collectors on every navigation, so completion timers and
+   * reported starts survive it: an animation still running must still end exactly once.
+   */
   async detach(): Promise<void> {
-    for (const state of this.active.values()) {
-      if (state.completionTimer) clearTimeout(state.completionTimer);
-    }
-    this.active.clear();
     this.verifier.clear();
     if (this.cdp) {
       try { await this.cdp.detach(); } catch { /* ignore */ }
