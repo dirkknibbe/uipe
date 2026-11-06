@@ -1,0 +1,66 @@
+/* Fixed geometry: the e2e test's scripted explorer acts at hard-coded coordinates (1280x720 viewport). */
+* { box-sizing: border-box; }
+body { margin: 0; font: 16px/1.5 system-ui, sans-serif; background: #f7f7f2; color: #1b1b1b; }
+main { width: 900px; margin: 0 auto; padding: 24px 0; }
+
+/* Nav hover underline: repeated on every page, so the recorder should keep it once.
+   Sticky, so the scroll sweep never slides the link out from under the pointer (no stray un-hovers). */
+.site-nav { position: sticky; top: 0; z-index: 5; height: 64px; padding: 0 24px; background: #fff; border-bottom: 1px solid #ddd; }
+.nav-link { position: relative; display: inline-block; width: 120px; height: 64px; line-height: 64px; color: #1b1b1b; text-decoration: none; text-align: center; }
+.nav-underline { position: absolute; left: 20px; right: 20px; bottom: 14px; height: 3px; background: #c4472b; transform: scaleX(0); transition: transform 250ms ease-out; }
+.nav-link:hover .nav-underline { transform: scaleX(1); }
+
+/* Hero page-load entrance: three staggered elements, one episode. */
+.hero { height: 560px; position: relative; }
+.hero-item { animation: rise 500ms ease-out both; }
+.hero-item:nth-child(2) { animation-delay: 150ms; }
+.hero-item:nth-child(3) { animation-delay: 300ms; }
+@keyframes rise { from { opacity: 0; transform: translateY(24px); } to { opacity: 1; transform: none; } }
+
+.modal-trigger { position: absolute; top: 340px; left: 0; width: 200px; height: 48px; font: inherit; background: #1b1b1b; color: #fff; border: 0; }
+
+/* Modal: backdrop + panel + three staggered children, one click episode with five animations. */
+.modal { display: none; }
+.modal.open { display: block; }
+.modal-backdrop { position: fixed; inset: 0; background: rgb(0 0 0 / 0.5); animation: fade 250ms ease-out both; }
+.modal-panel { position: fixed; top: 160px; left: 390px; width: 500px; height: 360px; padding: 32px; background: #fff; animation: pop 300ms ease-out both; }
+.modal-item { margin: 0 0 16px; animation: rise 300ms ease-out both; }
+.modal-item:nth-child(1) { animation-delay: 100ms; }
+.modal-item:nth-child(2) { animation-delay: 200ms; }
+.modal-item:nth-child(3) { animation-delay: 300ms; }
+@keyframes fade { from { opacity: 0; } to { opacity: 1; } }
+@keyframes pop { from { opacity: 0; transform: scale(0.9); } to { opacity: 1; transform: none; } }
+
+/* Scroll-driven section (CSS view timeline) plus a JS scroll-linked parallax layer. */
+.spacer { height: 700px; }
+.scroll-section { position: relative; height: 900px; overflow: hidden; }
+.reveal { height: 160px; margin: 40px 0; background: #2b6cc4; animation: reveal linear both; animation-timeline: view(); animation-range: entry 0% cover 40%; }
+@keyframes reveal { from { opacity: 0; transform: translateX(-80px); } to { opacity: 1; transform: none; } }
+.parallax { position: absolute; right: 0; top: 0; width: 240px; height: 240px; background: #e0b23a; border-radius: 50%; }
+
+/* Ambient marquee: infinite loop, kept once. */
+.marquee { width: 900px; overflow: hidden; white-space: nowrap; background: #1b1b1b; color: #fff; }
+.marquee-track { display: inline-block; padding: 24px 0; animation: marquee 3s linear infinite; }
+@keyframes marquee { from { transform: translateX(0); } to { transform: translateX(-50%); } }
+
+/* Junk: cookie banner slide-in. */
+.cookie-banner { position: fixed; left: 0; right: 0; bottom: 0; padding: 20px 24px; background: #333; color: #fff; animation: slide-up 400ms ease-out both; }
+@keyframes slide-up { from { transform: translateY(100%); } to { transform: none; } }
+
+/* Junk: 40x40 spinner. */
+.spinner { width: 40px; height: 40px; border: 4px solid #ccc; border-top-color: #c4472b; border-radius: 50%; animation: spin 900ms linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* Junk: an animation that runs entirely outside the viewport. */
+.offscreen-zone { position: relative; height: 200px; }
+.offscreen-box { position: absolute; left: -600px; top: 0; width: 200px; height: 120px; background: #9b2bc4; }
+.offscreen-box.go { animation: drift 400ms ease-out both; }
+@keyframes drift { from { transform: translateX(0); } to { transform: translateX(100px); } }
+
+/* Junk: autoplay video; its only animation is on the video element itself. */
+.promo-video { display: block; width: 640px; height: 300px; background: #000; }
+.promo-video.go { animation: kenburns 500ms ease-out both; }
+@keyframes kenburns { from { transform: scale(1); } to { transform: scale(1.05); } }
+
+/* Endless page. */
+.endless { width: 120px; height: 120px; margin: 120px auto; background: #2bc48a; }

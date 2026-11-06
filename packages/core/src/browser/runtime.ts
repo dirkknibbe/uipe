@@ -9,6 +9,10 @@ export type { ConsoleMessage, NetworkError };
 const logger = createLogger('BrowserRuntime');
 
 const MAX_LOG_ENTRIES = 1000;
+// tsx/esbuild keepNames rewrites named functions inside page.evaluate bodies as __name(fn, 'x') calls;
+// the page has no __name, so every such evaluate throws ReferenceError unless this shim exists first.
+// A string, so the shim itself is never transformed.
+const ESBUILD_NAME_SHIM = 'globalThis.__name ??= (f) => f;';
 
 export interface BrowserRuntimeOptions {
   headless?: boolean;
@@ -40,7 +44,9 @@ export class BrowserRuntime {
     logger.info('Launching browser');
     this.browser = await chromium.launch({ headless: this.options.headless });
     this.context = await this.browser.newContext({ viewport: this.options.viewport });
+    await this.context.addInitScript(ESBUILD_NAME_SHIM);
     this.page = await this.context.newPage();
+    await this.page.evaluate(ESBUILD_NAME_SHIM);
     this.page.on('console', (msg) => {
       if (this.consoleLogs.length < MAX_LOG_ENTRIES) {
         this.consoleLogs.push({ type: msg.type(), text: msg.text(), timestamp: Date.now() });

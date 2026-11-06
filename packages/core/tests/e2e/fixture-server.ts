@@ -13,6 +13,8 @@ const CONTENT_TYPES: Record<string, string> = {
 
 export interface FixtureServer {
   baseUrl: string;
+  /** Every request path received, in order. */
+  requests: string[];
   close: () => Promise<void>;
 }
 
@@ -20,12 +22,29 @@ export interface FixtureServer {
  * Serve a fixtures directory over http://127.0.0.1:<ephemeral-port>. E2E tests
  * navigate to this instead of file:// — url-guard now blocks file: (mcp-1/web-1),
  * and http fixtures are the more faithful e2e transport (real origin + network).
+ * `redirects` maps a path to a Location answered with 302 (redirect-escape tests);
+ * `statuses` maps a path to a status answered with an empty body (e.g. 204).
  */
-export async function startFixtureServer(rootDir: string): Promise<FixtureServer> {
+export async function startFixtureServer(
+  rootDir: string, redirects: Record<string, string> = {}, statuses: Record<string, number> = {},
+): Promise<FixtureServer> {
   const root = normalize(rootDir);
+  const requests: string[] = [];
   const server = createServer(async (req, res) => {
+    requests.push(req.url ?? '/');
     try {
       const pathname = new URL(req.url ?? '/', 'http://127.0.0.1').pathname;
+      const location = redirects[pathname];
+      if (location) {
+        res.writeHead(302, { location });
+        res.end();
+        return;
+      }
+      if (statuses[pathname]) {
+        res.writeHead(statuses[pathname]);
+        res.end();
+        return;
+      }
       const filePath = normalize(join(root, decodeURIComponent(pathname)));
       // Refuse anything that escapes the fixtures root (no ../ traversal).
       if (filePath !== root && !filePath.startsWith(root + sep)) {
@@ -46,6 +65,7 @@ export async function startFixtureServer(rootDir: string): Promise<FixtureServer
   const port = typeof addr === 'object' && addr ? addr.port : 0;
   return {
     baseUrl: `http://127.0.0.1:${port}`,
+    requests,
     close: () => new Promise<void>(resolve => server.close(() => resolve())),
   };
 }

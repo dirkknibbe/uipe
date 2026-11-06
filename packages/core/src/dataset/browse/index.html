@@ -1,0 +1,105 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>UIPE clip browser</title>
+<style>
+  body { font: 14px system-ui, sans-serif; margin: 0; display: grid; grid-template-columns: 280px 1fr; height: 100vh; }
+  aside { overflow: auto; border-right: 1px solid #ccc; padding: 8px; }
+  main { overflow: auto; padding: 12px; }
+  h3 { margin: 12px 0 4px; } h4 { margin: 8px 0 2px; color: #555; }
+  .clip { display: block; width: 100%; text-align: left; margin: 1px 0; }
+  .clip.sel { background: #cde; }
+  img { max-width: 100%; border: 1px solid #ccc; }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; } .row figure { margin: 0; flex: 1 1 300px; }
+  pre { background: #f4f4f4; padding: 8px; overflow: auto; }
+  .tabs button.on { font-weight: bold; }
+  #hc { font-size: 18px; margin: 8px 0; }
+</style>
+<aside>
+  <select id="run"></select>
+  <div class="tabs"><button data-tab="clips" class="on">Clips</button> <button data-tab="rejected">Rejected</button> <button data-tab="handcheck">Hand-check</button></div>
+  <div id="list"></div>
+</aside>
+<main id="main">Pick a run.</main>
+<script>
+const $ = (id) => document.getElementById(id);
+const api = (p, o) => fetch(p, o).then((r) => { if (!r.ok) throw new Error(`${p}: ${r.status}`); return r.json(); });
+const enc = encodeURIComponent;
+let runId = '', tab = 'clips', clips = [], sample = [], hcIdx = 0, timer = null;
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const clipFile = (clip, rel) => file(`clips/${clip.id}/${rel}`);
+const file = (rel) => `/files/${enc(runId)}/${rel.split('/').map(enc).join('/')}`;
+
+function stop() { clearInterval(timer); timer = null; }
+
+// Frames have no stored per-frame timestamps; space them by the measured capture rate.
+function play(img, clip) {
+  stop();
+  const frames = clip.files.frames;
+  if (frames.length < 2) return;
+  const fps = clip.measurements.achievedFps;
+  const span = clip.episode.endTs - clip.episode.startTs;
+  const interval = fps > 0 ? 1000 / fps : Math.max(span / frames.length, 16);
+  let i = 0;
+  timer = setInterval(() => { i = (i + 1) % frames.length; img.src = clipFile(clip, frames[i]); }, interval);
+}
+
+function detail(clip) {
+  const m = clip.measurements;
+  $('main').innerHTML = `<h3>${esc(clip.id)} <small>${esc(clip.kind)} · ${esc(clip.url)}</small></h3>
+    <div class="row"><figure><img id="player" src="${clip.files.frames[0] ? clipFile(clip, clip.files.frames[0]) : ''}"><figcaption>playback (${clip.files.frames.length} frames)</figcaption></figure>
+    <figure><img src="${clipFile(clip, clip.files.beforePng)}"><figcaption>before</figcaption></figure>
+    <figure><img src="${clipFile(clip, clip.files.afterPng)}"><figcaption>after</figcaption></figure></div>
+    <h4>Measurements</h4><pre>${esc(JSON.stringify(m, null, 2))}</pre>
+    <h4>Trace refs</h4><pre>${esc(clip.traceRefs.join('\n') || '(none)')}</pre>`;
+  play($('player'), clip);
+}
+
+function renderClips() {
+  const bySite = {};
+  for (const c of clips) ((bySite[c.site] ??= {})[c.kind] ??= []).push(c);
+  $('list').innerHTML = Object.entries(bySite).map(([site, kinds]) => `<h3>${esc(site)}</h3>` +
+    Object.entries(kinds).map(([kind, cs]) => `<h4>${esc(kind)} (${cs.length})</h4>` +
+      cs.map((c) => `<button class="clip" data-id="${esc(c.id)}">${esc(c.id)}</button>`).join('')).join('')).join('');
+  $('list').onclick = (e) => { const id = e.target.dataset?.id; if (id) detail(clips.find((c) => c.id === id)); };
+}
+
+async function renderRejected() {
+  const rows = await api(`/api/runs/${enc(runId)}/rejected`);
+  $('list').innerHTML = '';
+  $('main').innerHTML = `<h3>Rejected (${rows.length})</h3><div class="row">` + rows.map((r) =>
+    `<figure>${r.keyframe ? `<img src="${file(r.keyframe)}">` : ''}<figcaption><b>${esc(r.reason)}</b> ${esc(r.episodeId)}<br>${esc(r.detail)}</figcaption></figure>`).join('') + '</div>';
+}
+
+function hcView() {
+  if (!sample.length) { $('main').textContent = 'No kept clips to sample.'; return; }
+  if (hcIdx >= sample.length) { $('main').innerHTML = `<h3>Hand-check complete (${sample.length}/${sample.length}).</h3>`; return; }
+  detail(clips.find((c) => c.id === sample[hcIdx]));
+  $('main').insertAdjacentHTML('afterbegin', `<div id="hc">${hcIdx + 1} / ${sample.length} — press <b>J</b> = junk, <b>K</b> = keep</div>`);
+}
+
+async function mark(junk) {
+  if (tab !== 'handcheck' || hcIdx >= sample.length) return;
+  await api(`/api/runs/${enc(runId)}/handcheck`, { method: 'POST', body: JSON.stringify({ clipId: sample[hcIdx], junk }) });
+  hcIdx++; hcView();
+}
+
+async function show(t) {
+  tab = t; stop();
+  document.querySelectorAll('.tabs button').forEach((b) => b.classList.toggle('on', b.dataset.tab === t));
+  if (!runId) return;
+  if (t === 'clips') { renderClips(); $('main').textContent = 'Pick a clip.'; }
+  else if (t === 'rejected') await renderRejected();
+  else { $('list').innerHTML = ''; sample = await api(`/api/runs/${enc(runId)}/sample?n=40`); hcIdx = 0; hcView(); }
+}
+
+async function load(id) { runId = id; clips = await api(`/api/runs/${enc(id)}/clips`); await show(tab); }
+
+document.querySelector('.tabs').onclick = (e) => e.target.dataset?.tab && show(e.target.dataset.tab);
+$('run').onchange = (e) => load(e.target.value);
+document.onkeydown = (e) => { const k = e.key.toLowerCase(); if (k === 'j') mark(true); else if (k === 'k') mark(false); };
+api('/api/runs').then((runs) => {
+  $('run').innerHTML = runs.map((r) => `<option value="${esc(r.runId)}">${esc(r.site)} ${esc(r.runId)}</option>`).join('');
+  if (runs.length) load(runs[0].runId);
+});
+</script>

@@ -1,15 +1,8 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
-import { dirname } from 'node:path';
-import { fileURLToPath } from 'node:url';
-import { existsSync } from 'node:fs';
 import { EventEmitter } from 'node:events';
-import { BrowserRuntime } from '../browser/runtime.js';
-import { StructuralPipeline } from '../pipelines/structural/index.js';
-import { FusionEngine } from '../pipelines/fusion/index.js';
 import { TemporalTracker } from '../pipelines/temporal/index.js';
 import { AffordanceEngine } from '../pipelines/affordance/index.js';
-import { VisualPipeline, type VisualPipelineConfig } from '../pipelines/visual/index.js';
 import { FrameCapture } from '../pipelines/visual/frame-capture.js';
 import { toJSON, toCompact } from '../pipelines/fusion/serializer.js';
 import { compileExcludePattern } from '../utils/safe-regex.js';
@@ -17,25 +10,8 @@ import { actInputSchema } from './act-schema.js';
 import { sanitizeToolError } from '../utils/sanitize-error.js';
 import { wrapUntrusted } from '../utils/untrusted.js';
 import { affordanceToText, formatVisualAnalysis } from './serializer.js';
-import { Config } from '../config.js';
-import type { AnalysisDepth } from '../types/index.js';
-import { TemporalEventStream } from '../pipelines/temporal/event-stream.js';
-import {
-  InputCollector,
-  NetworkCollector,
-  AnimationCollector,
-  MutationCollector,
-} from '../pipelines/temporal/collectors/index.js';
-import { FlowProducer } from '../pipelines/temporal/producers/optical-flow.js';
-import { FlowCollector } from '../pipelines/temporal/collectors/optical-flow.js';
 import { createLogger } from '../utils/logger.js';
-import { resolveFlowBinaryPath } from '../utils/flow-binary.js';
-import type { Collector } from '../pipelines/temporal/collectors/types.js';
 import { makeGetTimelineTool } from './tools/get-timeline.js';
-import { ComponentIndexStore } from '../pipelines/component-index/store.js';
-import { ClassificationQueue } from '../pipelines/component-index/queue.js';
-import { Matcher } from '../pipelines/component-index/matcher.js';
-import { Indexer } from '../pipelines/component-index/indexer.js';
 import { classifyByVlm } from '../pipelines/component-index/vlm-classifier.js';
 import { makeGetComponentIndexTool } from './tools/get-component-index.js';
 import {
@@ -44,16 +20,11 @@ import {
   makeStopPerceptionTool,
   makeGetPerceptionSessionTool,
 } from './tools/perception.js';
+import { createEngine, originOf, type Engine, type ServerConfig } from './engine.js';
+
+export type { Engine, ServerConfig } from './engine.js';
 
 const log = createLogger('mcp-server');
-const FLOW_BINARY_PATH = resolveFlowBinaryPath(
-  process.env,
-  dirname(fileURLToPath(import.meta.url)),
-);
-
-export interface ServerConfig {
-  visual?: VisualPipelineConfig;
-}
 
 export const TOOL_NAMES = [
   'navigate',
@@ -76,23 +47,31 @@ export const TOOL_NAMES = [
 ] as const;
 
 export function createServer(config: ServerConfig = {}): McpServer {
+  return createServerWithEngine(config).server;
+}
+
+export function createServerWithEngine(config: ServerConfig = {}): { server: McpServer; engine: Engine } {
   const server = new McpServer({ name: 'ui-perception-engine', version: '0.1.0' });
 
-  const runtime = new BrowserRuntime();
-  const structural = new StructuralPipeline();
-  const fusion = new FusionEngine();
+  const engine = createEngine(config);
+  const {
+    runtime,
+    eventStream,
+    ensureLaunched,
+    ensureStreamAttached,
+    captureGraph,
+    visual,
+    structural,
+    componentStore,
+    componentIndexer,
+    getFlowProducer,
+    scheduleIdleDrain,
+    isLaunched,
+  } = engine;
   const tracker = new TemporalTracker();
   const affordance = new AffordanceEngine();
-  const visual = config.visual ? new VisualPipeline(config.visual) : null;
-  const componentStore = new ComponentIndexStore();
-  const componentQueue = new ClassificationQueue();
-  const componentMatcher = new Matcher({ store: componentStore, queue: componentQueue });
-  const componentIndexer = new Indexer({ matcher: componentMatcher });
   const perceptionState = createPerceptionState();
-  const eventStream = new TemporalEventStream();
   let frameCapture: FrameCapture | null = null;
-  let flowProducer: FlowProducer | null = null;
-  let flowCollector: FlowCollector | null = null;
   // EventEmitter that bridges FrameCapture keyframes (frame/timestamp) to the
   // FlowProducer's FrameSource shape (pngBytes/phash/timestamp). Created lazily
   // in the watch tool handler; null when watch is not active.
@@ -100,79 +79,6 @@ export function createServer(config: ServerConfig = {}): McpServer {
   let flowBridgeListener: ((kf: { frame: Buffer; timestamp: number }) => void) | null = null;
   let keyframeCount = 0;
   let watchStartTime = 0;
-  let launchPromise: Promise<void> | undefined;
-  let streamAttachedTo: import('playwright').Page | undefined;
-
-  async function ensureLaunched(): Promise<void> {
-    if (!launchPromise) launchPromise = runtime.launch();
-    return launchPromise;
-  }
-
-  async function ensureStreamAttached(): Promise<void> {
-    const page = runtime.getPage();
-    if (streamAttachedTo === page) return;
-
-    const collectors: Collector[] = [
-      new InputCollector(),
-      new NetworkCollector(),
-      new AnimationCollector(),
-      new MutationCollector(),
-    ];
-
-    if (existsSync(FLOW_BINARY_PATH)) {
-      if (!flowProducer || flowProducer.disabled) {
-        flowProducer = new FlowProducer({ binaryPath: FLOW_BINARY_PATH });
-        flowProducer.on('disabled', () => {
-          log.warn('optical-flow sidecar disabled after consecutive failures', { binaryPath: FLOW_BINARY_PATH });
-        });
-        await flowProducer.start();
-        flowCollector = new FlowCollector(flowProducer);
-      }
-      collectors.push(flowCollector!);
-    } else {
-      log.debug('optical-flow sidecar binary missing, skipping flow pipeline', { binaryPath: FLOW_BINARY_PATH });
-    }
-
-    await eventStream.attach(page, collectors);
-    streamAttachedTo = page;
-  }
-
-  async function captureGraph(includeVisual: boolean | AnalysisDepth = false) {
-    const shouldCapture = includeVisual !== false && visual;
-    const [screenshot, nodes] = await Promise.all([
-      shouldCapture ? runtime.screenshot() : Promise.resolve(null),
-      structural.extractStructure(runtime.getPage()),
-    ]);
-    let visualElements = screenshot && visual ? await visual.detectElements(screenshot) : [];
-    if (screenshot && visual && typeof includeVisual === 'string') {
-      const result = await visual.analyze(screenshot, includeVisual);
-      visualElements = result.elements;
-    }
-    const origin = originOf(runtime.currentUrl());
-    const componentMap = await componentIndexer.run(nodes, { origin });
-    return fusion.fuse(visualElements, nodes, {
-      url: runtime.currentUrl(),
-      viewport: { width: Config.browser.viewportWidth, height: Config.browser.viewportHeight },
-      scrollPosition: { x: 0, y: 0 },
-    }, componentMap);
-  }
-
-  function originOf(url: string): string {
-    try {
-      return new URL(url).origin;
-    } catch {
-      return url;
-    }
-  }
-
-  function scheduleIdleDrain(): void {
-    if (componentQueue.size() === 0) return;
-    void componentQueue.drainOnce({
-      classifier: async ({ html, screenshotCrop }) => classifyByVlm({ html, screenshotCrop }),
-      screenshotProvider: () => runtime.screenshot().catch(() => null),
-      store: componentStore,
-    });
-  }
 
   // Tool 1: navigate
   server.registerTool(
@@ -294,7 +200,7 @@ export function createServer(config: ServerConfig = {}): McpServer {
       }),
     },
     async ({ type, excludePattern }) => {
-      if (!launchPromise) {
+      if (!isLaunched()) {
         return { content: [{ type: 'text' as const, text: 'No browser session. Call navigate first.' }] };
       }
       const logs = runtime.getConsoleLogs();
@@ -342,7 +248,7 @@ export function createServer(config: ServerConfig = {}): McpServer {
       inputSchema: z.object({}),
     },
     async () => {
-      if (!launchPromise) {
+      if (!isLaunched()) {
         return { content: [{ type: 'text' as const, text: 'No browser session. Call navigate first.' }] };
       }
       const errors = runtime.getNetworkErrors();
@@ -464,7 +370,7 @@ export function createServer(config: ServerConfig = {}): McpServer {
       inputSchema: z.object({}),
     },
     async () => {
-      if (!launchPromise) {
+      if (!isLaunched()) {
         return { content: [{ type: 'text' as const, text: 'No browser session. Call navigate first.' }] };
       }
       if (frameCapture?.capturing) {
@@ -489,6 +395,7 @@ export function createServer(config: ServerConfig = {}): McpServer {
       // Option A: adapter bridge — listens on FrameCapture 'keyframe' events
       // (shape: { frame, timestamp }) and re-emits with the FlowProducer's
       // FrameSource shape (pngBytes, phash, timestamp), computing phash lazily.
+      const flowProducer = getFlowProducer();
       if (flowProducer) {
         flowBridge = new EventEmitter();
         flowBridgeListener = async (kf: { frame: Buffer; timestamp: number }) => {
@@ -523,6 +430,7 @@ export function createServer(config: ServerConfig = {}): McpServer {
       await frameCapture.stop();
 
       // Detach the optical-flow bridge before clearing frameCapture
+      const flowProducer = getFlowProducer();
       if (flowProducer) flowProducer.detachFrameSource();
       if (frameCapture && flowBridgeListener) frameCapture.off('keyframe', flowBridgeListener);
       flowBridge = null;
@@ -626,6 +534,7 @@ export function createServer(config: ServerConfig = {}): McpServer {
         }
       });
       await frameCapture.start(runtime.getPage());
+      const flowProducer = getFlowProducer();
       if (flowProducer) {
         flowBridge = new EventEmitter();
         flowBridgeListener = async (kf: { frame: Buffer; timestamp: number }) => {
@@ -695,5 +604,5 @@ export function createServer(config: ServerConfig = {}): McpServer {
     },
   );
 
-  return server;
+  return { server, engine };
 }

@@ -96,7 +96,7 @@ describe('AnimationCollector', () => {
       animation: {
         id: 'anim-1',
         name: 'slide-in',
-        startTime: performance.now() / 1000,
+        startTime: performance.now(),
         playbackRate: 1,
         source: { duration: 300, easing: 'ease-out' },
       },
@@ -111,6 +111,35 @@ describe('AnimationCollector', () => {
       duration: 300,
       easing: 'ease-out',
     });
+  });
+
+  it('stamps animation-start from CDP startTime in page-clock milliseconds', async () => {
+    // CDP Animation.startTime is milliseconds on the page's performance clock (verified in Chromium).
+    const { cdp, handlers } = makeMockCdp();
+    const page = makeMockPage(cdp);
+    (page.evaluate as any).mockResolvedValue(1000); // page performance.now() at attach
+    const stream = new TemporalEventStream();
+    await stream.attach(page);
+    await new AnimationCollector().attach(page, stream);
+
+    handlers.get('Animation.animationStarted')![0]({
+      animation: { id: 'anim-ms', name: 'rise', startTime: 1250, playbackRate: 1, source: { duration: 300 } },
+    });
+
+    expect(stream.getEvents()[0].timestamp).toBe(250);
+  });
+
+  it('keeps identical CDP starts from one stagger (same name, start time and delay)', async () => {
+    const { cdp, handlers } = makeMockCdp();
+    const page = makeMockPage(cdp);
+    const stream = new TemporalEventStream();
+    await stream.attach(page);
+    await new AnimationCollector().attach(page, stream);
+    const fire = handlers.get('Animation.animationStarted')![0];
+    for (const id of ['r1', 'r2']) {
+      fire({ animation: { id, name: 'reveal', startTime: 500, playbackRate: 1, source: { duration: 40, delay: 0 } } });
+    }
+    expect(stream.getEvents().filter((e) => e.type === 'animation-start')).toHaveLength(2);
   });
 
   it('animationCanceled pushes animation-end event with reason canceled', async () => {
@@ -154,6 +183,126 @@ describe('AnimationCollector', () => {
     await collector.detach();
   });
 
+  it('still ends an animation that was running when the stream re-attached it on navigation', async () => {
+    vi.useFakeTimers();
+    try {
+      const { cdp, handlers } = makeMockCdp();
+      const page = makeMockPage(cdp);
+      const stream = new TemporalEventStream();
+      await stream.attach(page);
+      const collector = new AnimationCollector();
+      await collector.attach(page, stream);
+      await handlers.get('Animation.animationStarted')![0]({
+        animation: { id: 'anim-r', name: 'rise', startTime: 0, playbackRate: 1, source: { duration: 300, iterations: 1 } },
+      });
+
+      await collector.detach();
+      await collector.attach(page, stream);
+      await vi.advanceTimersByTimeAsync(400);
+
+      const end = stream.getEvents().find((e) => e.type === 'animation-end');
+      expect(end?.payload).toMatchObject({ animationId: 'anim-r', reason: 'completed' });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('drops the end of an animation whose document died when the stream re-anchored its clock', async () => {
+    vi.useFakeTimers();
+    try {
+      const { cdp, handlers } = makeMockCdp();
+      const page = makeMockPage(cdp);
+      const stream = new TemporalEventStream();
+      await stream.attach(page);
+      const collector = new AnimationCollector();
+      await collector.attach(page, stream);
+      await handlers.get('Animation.animationStarted')![0]({
+        animation: { id: 'hover-u', name: 'underline', startTime: 0, playbackRate: 1, source: { duration: 250, iterations: 1 } },
+      });
+
+      // Cross-document navigation: new clock, and the new session never replays 'hover-u'.
+      await stream.attach(page);
+      await collector.detach();
+      await collector.attach(page, stream);
+      await vi.advanceTimersByTimeAsync(400);
+
+      expect(stream.getEvents().filter((e) => e.type === 'animation-end')).toEqual([]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('re-stamps on the new clock the end of an animation the new session replayed after a re-anchor', async () => {
+    vi.useFakeTimers();
+    try {
+      const { cdp, handlers } = makeMockCdp();
+      const page = makeMockPage(cdp);
+      const stream = new TemporalEventStream();
+      await stream.attach(page);
+      const collector = new AnimationCollector();
+      await collector.attach(page, stream);
+      const start = { animation: { id: 'spa-r', name: 'rise', startTime: 0, playbackRate: 1, source: { duration: 300, iterations: 1 } } };
+      await handlers.get('Animation.animationStarted')![0](start);
+      const wallAtStart = Date.now();
+
+      await vi.advanceTimersByTimeAsync(100);
+      // Same-document navigation: the clock re-anchors, but the animation survives and is replayed.
+      await stream.attach(page);
+      await collector.detach();
+      await collector.attach(page, stream);
+      const replay = handlers.get('Animation.animationStarted')!;
+      await replay[replay.length - 1](start);
+      await vi.advanceTimersByTimeAsync(300);
+
+      const ends = stream.getEvents().filter((e) => e.type === 'animation-end');
+      expect(ends).toHaveLength(1);
+      expect(ends[0].payload).toMatchObject({ animationId: 'spa-r', reason: 'completed' });
+      expect(ends[0].timestamp).toBeCloseTo(stream.getNormalizer()!.fromWallTimeMs(wallAtStart + 300), 0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('listens before Animation.enable, which replays existing animations before its reply', async () => {
+    const { cdp, handlers } = makeMockCdp();
+    (cdp.send as any).mockImplementation(async (method: string) => {
+      if (method !== 'Animation.enable') return undefined;
+      // Chromium replays existing animations as animationStarted before the enable reply.
+      for (const h of handlers.get('Animation.animationStarted') ?? []) {
+        h({ animation: { id: 'early', name: 'slide-up', startTime: 5, playbackRate: 1, source: { duration: 400 } } });
+      }
+      return undefined;
+    });
+    const page = makeMockPage(cdp);
+    const stream = new TemporalEventStream();
+    await stream.attach(page);
+    await new AnimationCollector().attach(page, stream);
+    expect(stream.getEvents().filter((e) => e.type === 'animation-start').map((e) => (e.payload as any).name)).toEqual(['slide-up']);
+  });
+
+  it('does not push again a start the previous session reported when Animation.enable replays it', async () => {
+    const { cdp, handlers } = makeMockCdpWithVerifier({
+      startReadResponse: { result: { value: { keyframes: [], timing: {}, bbox: null, tag: 'h1', marker: 'r1' } } },
+    });
+    const page = makeMockPage(cdp);
+    const stream = new TemporalEventStream();
+    await stream.attach(page);
+    const collector = new AnimationCollector();
+    await collector.attach(page, stream);
+    const start = { animation: { id: 'r1', name: 'rise', startTime: 120, playbackRate: 1, source: { duration: 500 } } };
+    (cdp.send as any).mockImplementationOnce(async () => { throw new Error('session closed'); }); // old session dies mid-read
+    await handlers.get('Animation.animationStarted')![0](start);
+
+    await collector.detach();
+    await collector.attach(page, stream);
+    const replayHandlers = handlers.get('Animation.animationStarted')!;
+    await replayHandlers[replayHandlers.length - 1](start);
+
+    const starts = stream.getEvents().filter((e) => e.type === 'animation-start');
+    expect(starts).toHaveLength(1);
+    expect(starts[0].payload).toMatchObject({ animationId: 'r1', targetMarker: 'r1', targetTag: 'h1' });
+  });
+
   it('collector has stable name', () => {
     expect(new AnimationCollector().name).toBe('animation');
   });
@@ -172,9 +321,9 @@ describe('AnimationCollector', () => {
       animation: {
         id: 'anim-2',
         name: 'fade',
-        startTime: performance.now() / 1000,
+        startTime: performance.now(),
         playbackRate: 1,
-        source: { duration: 300, easing: 'linear' },
+        source: { duration: 300, iterations: 1, easing: 'linear' },
       },
     });
 
@@ -204,7 +353,7 @@ describe('AnimationCollector', () => {
       animation: {
         id: 'anim-1',
         name: 'slide',
-        startTime: performance.now() / 1000,
+        startTime: performance.now(),
         playbackRate: 1,
         source: { duration: 300, easing: 'linear' },
       },
@@ -237,9 +386,9 @@ describe('AnimationCollector', () => {
         animation: {
           id: 'anim-1',
           name: 'slide',
-          startTime: performance.now() / 1000,
+          startTime: performance.now(),
           playbackRate: 1,
-          source: { duration: 100, easing: 'linear' },
+          source: { duration: 100, iterations: 1, easing: 'linear' },
         },
       });
       await vi.advanceTimersByTimeAsync(0);
@@ -271,7 +420,7 @@ describe('AnimationCollector', () => {
       animation: {
         id: 'anim-1',
         name: 'slide',
-        startTime: performance.now() / 1000,
+        startTime: performance.now(),
         playbackRate: 1,
         source: { duration: 300, easing: 'linear' },
       },
@@ -301,7 +450,7 @@ describe('AnimationCollector', () => {
       animation: {
         id: 'anim-1',
         name: 'slide',
-        startTime: performance.now() / 1000,
+        startTime: performance.now(),
         playbackRate: 1,
         source: { duration: 300, easing: 'linear' },
       },
@@ -347,7 +496,7 @@ describe('AnimationCollector', () => {
       animation: {
         id: 'anim-1',
         name: 'slide',
-        startTime: performance.now() / 1000,
+        startTime: performance.now(),
         playbackRate: 1,
         source: { duration: 300, easing: 'linear' },
       },
@@ -381,5 +530,67 @@ describe('AnimationCollector', () => {
     // Order: animation-start, then animation-end (canceled). NO animation-prediction.
     expect(types).toEqual(['animation-start', 'animation-end']);
     expect((events[1].payload as any).reason).toBe('canceled');
+  });
+});
+
+describe('AnimationCollector timing and target marker', () => {
+  const setup = async (cdp: CDPSession) => {
+    const page = makeMockPage(cdp);
+    const stream = new TemporalEventStream();
+    await stream.attach(page);
+    const collector = new AnimationCollector();
+    await collector.attach(page, stream);
+    return { stream, collector };
+  };
+  const startAnim = (handlers: Map<string, Function[]>, id: string, source: object) =>
+    handlers.get('Animation.animationStarted')![0]({
+      animation: { id, name: 'x', startTime: performance.now(), playbackRate: 1, source },
+    });
+  const fake = () => vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'Date', 'performance'] });
+
+  it('emits_end_after_all_iterations', async () => {
+    fake();
+    try {
+      const { cdp, handlers } = makeMockCdp();
+      const { stream } = await setup(cdp);
+      await startAnim(handlers, 'a', { duration: 200, iterations: 3, delay: 100, endDelay: 0 });
+      await vi.advanceTimersByTimeAsync(300);
+      expect(stream.getEvents().some((e) => e.type === 'animation-end')).toBe(false);
+      await vi.advanceTimersByTimeAsync(420);
+      const end = stream.getEvents().find((e) => e.type === 'animation-end')!;
+      expect(end.payload).toMatchObject({ animationId: 'a', reason: 'completed' });
+      const start = stream.getEvents().find((e) => e.type === 'animation-start')!;
+      expect(end.timestamp - start.timestamp).toBe(700);
+    } finally { vi.useRealTimers(); }
+  });
+
+  it('infinite_animation_never_emits_completed_end', async () => {
+    fake();
+    try {
+      const { cdp, handlers } = makeMockCdp();
+      const { stream } = await setup(cdp);
+      await startAnim(handlers, 'inf', { duration: 200 });
+      await vi.advanceTimersByTimeAsync(5000);
+      const events = stream.getEvents();
+      expect(events.find((e) => e.type === 'animation-start')!.payload).toMatchObject({ iterations: Infinity });
+      expect(events.some((e) => e.type === 'animation-end')).toBe(false);
+    } finally { vi.useRealTimers(); }
+  });
+
+  it('zero_duration_does_not_leak_active_entry', async () => {
+    const { cdp, handlers } = makeMockCdp();
+    const { collector } = await setup(cdp);
+    await startAnim(handlers, 'z', { duration: 0, iterations: 1 });
+    expect((collector as any).active.size).toBe(0);
+  });
+
+  it('start_payload_carries_target_marker_and_selector', async () => {
+    const { cdp, handlers } = makeMockCdpWithVerifier({
+      startReadResponse: { result: { value: { selector: 'div.modal', tag: 'div', marker: 'anim-1' } } },
+    });
+    const { stream } = await setup(cdp);
+    await startAnim(handlers, 'anim-1', { duration: 300, iterations: 1 });
+    const start = stream.getEvents().find((e) => e.type === 'animation-start')!;
+    expect(start.payload).toMatchObject({ target: 'div.modal', targetTag: 'div', targetMarker: 'anim-1' });
   });
 });

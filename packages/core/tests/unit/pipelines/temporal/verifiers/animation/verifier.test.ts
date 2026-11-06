@@ -50,6 +50,26 @@ describe('AnimationVerifier.captureStart', () => {
     expect(payload.skipped).toBeUndefined();
   });
 
+  it('reads every target when starts arrive together (a resolve releases earlier remote objects)', async () => {
+    // Chromium invalidates the previous resolveAnimation object on the next resolve, so the
+    // resolve + read pairs of a staggered group must not interleave.
+    let latest = '';
+    let n = 0;
+    const cdp = {
+      send: vi.fn(async (method: string, params: any) => {
+        await new Promise((r) => setTimeout(r, 1));
+        if (method === 'Animation.resolveAnimation') return { remoteObject: { objectId: (latest = `obj-${++n}`) } };
+        if (params.objectId !== latest) throw new Error('Could not find object with given id');
+        return { result: { value: { keyframes: [], timing: {}, bbox: null, tag: 'div', marker: params.objectId } } };
+      }),
+    } as unknown as CDPSession;
+    const v = new AnimationVerifier();
+    const targets: unknown[] = [];
+    await Promise.all(['a', 'b', 'c'].map((id) =>
+      v.captureStart(cdp, animStartParams({ animation: { id } }), (t) => targets.push(t.tag))));
+    expect(targets).toEqual(['div', 'div', 'div']);
+  });
+
   it('emits skipped:zero-duration for duration=0 animations', async () => {
     const cdp = makeMockCdp();
     const v = new AnimationVerifier();

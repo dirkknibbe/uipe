@@ -50,6 +50,13 @@ export interface AnimationStartPayload {
   duration: number;
   easing?: string;
   target?: string;
+  /** Infinity when CDP omits it (infinite animation). */
+  iterations?: number;
+  delay?: number;
+  endDelay?: number;
+  /** Value of data-uipe-anim set on the target element (== animationId). */
+  targetMarker?: string;
+  targetTag?: string;
 }
 
 export type SupportedProperty =
